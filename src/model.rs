@@ -2,11 +2,11 @@
 //!
 //! This is our abstract description of types and routines in a program.
 
+use crate::DebugDb;
+use indexmap::IndexMap;
 use std::borrow::Cow;
 use std::hash::Hash;
 use std::num::NonZeroU64;
-use crate::DebugDb;
-use indexmap::IndexMap;
 
 /// Identifies a specific type within a program, using its offset within the
 /// debug section(s).
@@ -142,10 +142,7 @@ impl Type {
     ///
     /// Not all types have sizes.
     pub fn byte_size(&self, world: &DebugDb) -> Option<u64> {
-        self.byte_size_early(
-            world.pointer_size(),
-            |t| world.type_by_id(t),
-        )
+        self.byte_size_early(world.pointer_size(), |t| world.type_by_id(t))
     }
 
     /// Determines the name of the type.
@@ -289,7 +286,9 @@ pub struct Struct {
 
 impl Struct {
     pub fn unique_member(&self, name: &str) -> Option<&Member> {
-        let mut matches = self.members.iter()
+        let mut matches = self
+            .members
+            .iter()
             .filter(|m| m.name.as_deref() == Some(name));
         let first = matches.next()?;
         if matches.next().is_some() {
@@ -722,8 +721,14 @@ impl Equiv for TypeId {
 
 impl Equiv for Member {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
-        let self_easy = (&self.name, self.artificial, self.alignment, self.location);
-        let other_easy = (&other.name, other.artificial, other.alignment, other.location);
+        let self_easy =
+            (&self.name, self.artificial, self.alignment, self.location);
+        let other_easy = (
+            &other.name,
+            other.artificial,
+            other.alignment,
+            other.location,
+        );
         if self_easy != other_easy {
             return None;
         }
@@ -743,7 +748,18 @@ impl Equiv for VariantShape {
         match (self, other) {
             (Self::Zero, Self::Zero) => Some(vec![]),
             (Self::One(a), Self::One(b)) => a.equiv(b),
-            (Self::Many { member: ma, variants: va, .. }, Self::Many { member: mb, variants: vb, .. }) => {
+            (
+                Self::Many {
+                    member: ma,
+                    variants: va,
+                    ..
+                },
+                Self::Many {
+                    member: mb,
+                    variants: vb,
+                    ..
+                },
+            ) => {
                 let mut conditions = vec![];
                 conditions.extend(ma.equiv(mb)?);
                 conditions.extend(va.equiv(vb)?);
@@ -765,7 +781,8 @@ impl Equiv for TemplateTypeParameter {
 }
 
 impl<T> Equiv for Vec<T>
-    where T: Equiv,
+where
+    T: Equiv,
 {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
         if self.len() != other.len() {
@@ -781,19 +798,21 @@ impl<T> Equiv for Vec<T>
 }
 
 impl<T> Equiv for Option<T>
-    where T: Equiv,
+where
+    T: Equiv,
 {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
         match (self, other) {
             (Some(a), Some(b)) => a.equiv(b),
-            _ => None
+            _ => None,
         }
     }
 }
 
 impl<K, T> Equiv for IndexMap<K, T>
-    where T: Equiv,
-          K: Eq + Hash,
+where
+    T: Equiv,
+    K: Eq + Hash,
 {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
         if self.len() != other.len() {
@@ -810,14 +829,23 @@ impl<K, T> Equiv for IndexMap<K, T>
 
 impl Equiv for Struct {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
-        let self_easy = (&self.name, self.byte_size, self.alignment, self.tuple_like);
-        let other_easy = (&other.name, other.byte_size, other.alignment, other.tuple_like);
+        let self_easy =
+            (&self.name, self.byte_size, self.alignment, self.tuple_like);
+        let other_easy = (
+            &other.name,
+            other.byte_size,
+            other.alignment,
+            other.tuple_like,
+        );
         if self_easy != other_easy {
             return None;
         }
 
         let mut conditions = vec![];
-        conditions.extend(self.template_type_parameters.equiv(&other.template_type_parameters)?);
+        conditions.extend(
+            self.template_type_parameters
+                .equiv(&other.template_type_parameters)?,
+        );
         conditions.extend(self.members.equiv(&other.members)?);
 
         Some(conditions)
@@ -833,7 +861,10 @@ impl Equiv for Union {
         }
 
         let mut conditions = vec![];
-        conditions.extend(self.template_type_parameters.equiv(&other.template_type_parameters)?);
+        conditions.extend(
+            self.template_type_parameters
+                .equiv(&other.template_type_parameters)?,
+        );
         conditions.extend(self.members.equiv(&other.members)?);
 
         Some(conditions)
@@ -849,7 +880,10 @@ impl Equiv for Enum {
         }
 
         let mut conditions = vec![];
-        conditions.extend(self.template_type_parameters.equiv(&other.template_type_parameters)?);
+        conditions.extend(
+            self.template_type_parameters
+                .equiv(&other.template_type_parameters)?,
+        );
         conditions.extend(self.shape.equiv(&other.shape)?);
 
         Some(conditions)
@@ -869,8 +903,14 @@ impl Equiv for Pointer {
 
 impl Equiv for Base {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
-        let self_easy = (&self.name, self.encoding, self.byte_size, self.alignment);
-        let other_easy = (&other.name, other.encoding, other.byte_size, other.alignment);
+        let self_easy =
+            (&self.name, self.encoding, self.byte_size, self.alignment);
+        let other_easy = (
+            &other.name,
+            other.encoding,
+            other.byte_size,
+            other.alignment,
+        );
         if self_easy != other_easy {
             return None;
         }
@@ -903,8 +943,14 @@ impl Equiv for Enumerator {
 
 impl Equiv for CEnum {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
-        let self_easy = (&self.name, self.enum_class, self.byte_size, self.alignment);
-        let other_easy = (&other.name, other.enum_class, other.byte_size, other.alignment);
+        let self_easy =
+            (&self.name, self.enum_class, self.byte_size, self.alignment);
+        let other_easy = (
+            &other.name,
+            other.enum_class,
+            other.byte_size,
+            other.alignment,
+        );
         if self_easy != other_easy {
             return None;
         }
@@ -917,7 +963,8 @@ impl Equiv for Subroutine {
     fn equiv(&self, other: &Self) -> Option<Vec<(TypeId, TypeId)>> {
         let mut conditions = vec![];
         conditions.extend(self.return_type_id.equiv(&other.return_type_id)?);
-        conditions.extend(self.formal_parameters.equiv(&other.formal_parameters)?);
+        conditions
+            .extend(self.formal_parameters.equiv(&other.formal_parameters)?);
         Some(conditions)
     }
 }

@@ -6,11 +6,11 @@
 use regex::Regex;
 
 use crate::load::{choose_variant, load_unsigned, Load, LoadError, Machine};
-use crate::{Encoding, Type, DebugDb, TypeId, EntityId};
+use crate::{DebugDb, Encoding, EntityId, Type, TypeId};
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryFrom;
 use std::fmt::Display;
-use std::collections::{BTreeSet, BTreeMap};
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -36,23 +36,28 @@ impl Value {
     }
 
     pub fn pointer_value(&self) -> Option<u64> {
-        let Self::Pointer(p) = self else { return None; };
+        let Self::Pointer(p) = self else {
+            return None;
+        };
         Some(p.value)
     }
 
     pub fn newtype(&self, name: &str) -> Option<&Value> {
         let Self::Struct(s) = self else { return None };
-        if s.name != name { return None; }
-        if s.members.len() != 1 { return None };
+        if s.name != name {
+            return None;
+        }
+        if s.members.len() != 1 {
+            return None;
+        };
         s.any_member_named("__0")
     }
 
     pub fn type_name(&self) -> Cow<'_, str> {
         match self {
             Self::Array(es) => {
-                let elt_type = es.first()
-                    .map(|v| v.type_name())
-                    .unwrap_or("???".into());
+                let elt_type =
+                    es.first().map(|v| v.type_name()).unwrap_or("???".into());
                 format!("[{}; {}]", elt_type, es.len()).into()
             }
             Self::Base(b) => match b {
@@ -71,9 +76,11 @@ impl Value {
 
     pub fn collect_names(&self, set: &mut BTreeSet<String>) {
         match self {
-            Self::Array(v) => for elt in v {
-                elt.collect_names(set);
-            },
+            Self::Array(v) => {
+                for elt in v {
+                    elt.collect_names(set);
+                }
+            }
             Self::Base(_) => (),
             Self::Struct(s) => {
                 set.insert(s.name.clone());
@@ -97,7 +104,13 @@ impl Value {
         }
     }
 
-    fn text(&self, world: &DebugDb, indent: usize, use_table: &UseTable, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+    fn text(
+        &self,
+        world: &DebugDb,
+        indent: usize,
+        use_table: &UseTable,
+        f: &mut core::fmt::Formatter,
+    ) -> core::fmt::Result {
         match self {
             Self::Base(b) => match b {
                 Base::U8(x) => write!(f, "{x}_u8"),
@@ -109,27 +122,33 @@ impl Value {
                 Base::Unit => write!(f, "()"),
             },
             Self::Pointer(p) => {
-                let nearest = world.entities_by_address(p.value)
-                    .filter_map(|ar| if let EntityId::Var(v) = ar.entity {
-                        Some((v, ar.range.clone()))
-                    } else {
-                        None
+                let nearest = world
+                    .entities_by_address(p.value)
+                    .filter_map(|ar| {
+                        if let EntityId::Var(v) = ar.entity {
+                            Some((v, ar.range.clone()))
+                        } else {
+                            None
+                        }
                     })
                     .min_by_key(|(_, range)| range.start.abs_diff(p.value));
                 if let Some((vid, _range)) = nearest {
                     let var = world.static_variable_by_id(vid).unwrap();
                     let name = &var.name;
-                    let prefix = if p.is_probably_mut() {
-                        "&mut "
-                    } else {
-                        "&"
-                    };
-                    write!(f, "{prefix}{name} /* {:#x} */ as {}", p.value, p.name)
+                    let prefix =
+                        if p.is_probably_mut() { "&mut " } else { "&" };
+                    write!(
+                        f,
+                        "{prefix}{name} /* {:#x} */ as {}",
+                        p.value, p.name
+                    )
                 } else {
                     write!(f, "{:#x} as {}", p.value, p.name)
                 }
-            },
-            Self::CEnum(e) => write!(f, "{}::{}", use_table.rewrite(&e.name), e.disc),
+            }
+            Self::CEnum(e) => {
+                write!(f, "{}::{}", use_table.rewrite(&e.name), e.disc)
+            }
             Self::Array(v) => {
                 // TODO: special-case bases for more compact printering
                 writeln!(f, "[")?;
@@ -161,42 +180,73 @@ fn display_dyn(
     f: &mut core::fmt::Formatter,
 ) -> Result<bool, core::fmt::Error> {
     let dynptr = Regex::new(r#"^[&*](mut )?dyn (.*)$"#).unwrap();
-    if s.members.len() != 2 { return Ok(false); }
+    if s.members.len() != 2 {
+        return Ok(false);
+    }
 
-    let Some(c) = dynptr.captures(&s.name) else { return Ok(false); };
+    let Some(c) = dynptr.captures(&s.name) else {
+        return Ok(false);
+    };
     let _trait_name = &c[2];
     let ismut = &c[1];
-    let Some((_, value)) = s.members.iter()
+    let Some((_, value)) = s
+        .members
+        .iter()
         .find(|(name, _)| name.as_ref().map(String::as_str) == Some("vtable"))
-        else { return Ok(false); };
+    else {
+        return Ok(false);
+    };
 
-    let Some((_, dest)) = s.members.iter()
+    let Some((_, dest)) = s
+        .members
+        .iter()
         .find(|(name, _)| name.as_ref().map(String::as_str) == Some("pointer"))
-        else { return Ok(false); };
+    else {
+        return Ok(false);
+    };
 
-    let Some(addr) = value.pointer_value() else { return Ok(false); };
-    let Some(dest_addr) = dest.pointer_value() else { return Ok(false); };
+    let Some(addr) = value.pointer_value() else {
+        return Ok(false);
+    };
+    let Some(dest_addr) = dest.pointer_value() else {
+        return Ok(false);
+    };
 
     for e in world.entities_by_address(addr) {
         if addr != e.range.start {
             continue;
         }
-        let EntityId::Var(v) = e.entity else { return Ok(false); };
-        let Some(v) = world.static_variable_by_id(v) else { return Ok(false); };
+        let EntityId::Var(v) = e.entity else {
+            return Ok(false);
+        };
+        let Some(v) = world.static_variable_by_id(v) else {
+            return Ok(false);
+        };
 
         let vtable = Regex::new(r#"^<(.*) as (.*)>::\{vtable\}$"#).unwrap();
-        let Some(vc) = vtable.captures(&v.name) else { return Ok(false); };
+        let Some(vc) = vtable.captures(&v.name) else {
+            return Ok(false);
+        };
         let concrete = &vc[1];
         let trait_name = &vc[2];
 
-        write!(f, "{dest_addr:#x} as &{ismut}{concrete} as &{ismut}dyn {trait_name}")?;
+        write!(
+            f,
+            "{dest_addr:#x} as &{ismut}{concrete} as &{ismut}dyn {trait_name}"
+        )?;
         return Ok(true);
     }
 
     Ok(false)
 }
 
-fn fmt_struct_body(s: &Struct, world: &DebugDb, indent: usize, use_table: &UseTable, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+fn fmt_struct_body(
+    s: &Struct,
+    world: &DebugDb,
+    indent: usize,
+    use_table: &UseTable,
+    f: &mut core::fmt::Formatter,
+) -> core::fmt::Result {
     if s.members.is_empty() {
         Ok(())
     } else if s.is_tuple_like() {
@@ -252,7 +302,8 @@ struct UseTable(BTreeMap<String, String>);
 
 impl UseTable {
     fn new(names: BTreeSet<String>) -> Self {
-        let simple = Regex::new(r#"^([a-zA-Z_0-9{}#]+::)*([A-Za-z0-9_]+)$"#).unwrap();
+        let simple =
+            Regex::new(r#"^([a-zA-Z_0-9{}#]+::)*([A-Za-z0-9_]+)$"#).unwrap();
         let mut rewrites = BTreeMap::new();
         let mut taken = BTreeSet::new();
         for name in names {
@@ -330,37 +381,31 @@ impl Load for Base {
         world: &DebugDb,
         ty: &Type,
     ) -> Result<Self, LoadError<M::Error>> {
-        let Type::Base(b) = ty else { return Err(LoadError::NotABase); };
+        let Type::Base(b) = ty else {
+            return Err(LoadError::NotABase);
+        };
         match (b.encoding, b.byte_size) {
-            (Encoding::Unsigned, 1) => Ok(Base::U8(load_unsigned(
-                world.endian(),
-                machine,
-                addr,
-                1,
-            )?.ok_or(LoadError::DataUnavailable)? as u8)),
-            (Encoding::Unsigned, 4) => Ok(Base::U32(load_unsigned(
-                world.endian(),
-                machine,
-                addr,
-                4,
-            )?.ok_or(LoadError::DataUnavailable)? as u32)),
-            (Encoding::Unsigned, 8) => Ok(Base::U64(load_unsigned(
-                world.endian(),
-                machine,
-                addr,
-                8,
-            )?.ok_or(LoadError::DataUnavailable)?)),
-            (Encoding::Boolean, 1) => Ok(Base::Bool(load_unsigned(
-                world.endian(),
-                machine,
-                addr,
-                1,
-            )?.ok_or(LoadError::DataUnavailable)? as u8)),
+            (Encoding::Unsigned, 1) => Ok(Base::U8(
+                load_unsigned(world.endian(), machine, addr, 1)?
+                    .ok_or(LoadError::DataUnavailable)? as u8,
+            )),
+            (Encoding::Unsigned, 4) => Ok(Base::U32(
+                load_unsigned(world.endian(), machine, addr, 4)?
+                    .ok_or(LoadError::DataUnavailable)? as u32,
+            )),
+            (Encoding::Unsigned, 8) => Ok(Base::U64(
+                load_unsigned(world.endian(), machine, addr, 8)?
+                    .ok_or(LoadError::DataUnavailable)?,
+            )),
+            (Encoding::Boolean, 1) => Ok(Base::Bool(
+                load_unsigned(world.endian(), machine, addr, 1)?
+                    .ok_or(LoadError::DataUnavailable)? as u8,
+            )),
             (Encoding::Unsigned, 0) => Ok(Base::Unit),
             _ => {
                 println!("{:?} {}", b.encoding, b.byte_size);
                 Err(LoadError::UnsupportedType)
-            },
+            }
         }
     }
 }
@@ -375,8 +420,12 @@ impl Struct {
     // TODO: better to have a Value::Tuple and distinguish at creation
     pub fn is_tuple_like(&self) -> bool {
         for (name, _) in &self.members {
-            let Some(name) = name else { return false; };
-            if !name.starts_with("__") { return false; }
+            let Some(name) = name else {
+                return false;
+            };
+            if !name.starts_with("__") {
+                return false;
+            }
             if name[2..].parse::<u32>().is_err() {
                 return false;
             }
@@ -384,9 +433,15 @@ impl Struct {
         true
     }
 
-    pub fn members_named<'s, 'n>(&'s self, name: &'n str) -> impl Iterator<Item = &'s Value> + 'n
-    where 's: 'n {
-        self.members.iter()
+    pub fn members_named<'s, 'n>(
+        &'s self,
+        name: &'n str,
+    ) -> impl Iterator<Item = &'s Value> + 'n
+    where
+        's: 'n,
+    {
+        self.members
+            .iter()
             .filter(|(n, _)| n.as_deref() == Some(name))
             .map(|(_, value)| value)
     }
@@ -402,7 +457,8 @@ impl Struct {
     }
 
     pub fn any_member_named(&self, name: &str) -> Option<&Value> {
-        self.members.iter()
+        self.members
+            .iter()
             .find(|(n, _)| n.as_deref() == Some(name))
             .map(|(_, v)| v)
     }
@@ -415,7 +471,9 @@ impl Load for Struct {
         world: &DebugDb,
         ty: &Type,
     ) -> Result<Self, LoadError<M::Error>> {
-        let Type::Struct(s) = ty else { return Err(LoadError::NotAStruct); };
+        let Type::Struct(s) = ty else {
+            return Err(LoadError::NotAStruct);
+        };
         let mut members = vec![];
 
         for m in &s.members {
@@ -446,7 +504,9 @@ impl Load for Enum {
         world: &DebugDb,
         ty: &Type,
     ) -> Result<Self, LoadError<M::Error>> {
-        let Type::Enum(s) = ty else { return Err(LoadError::NotAnEnum); };
+        let Type::Enum(s) = ty else {
+            return Err(LoadError::NotAnEnum);
+        };
         let v = choose_variant(machine, addr, world, s)?;
 
         let vtype_id = v.member.type_id;
@@ -475,14 +535,17 @@ impl Load for CEnum {
         world: &DebugDb,
         ty: &Type,
     ) -> Result<Self, LoadError<M::Error>> {
-        let Type::CEnum(s) = ty else { return Err(LoadError::NotACEnum) };
+        let Type::CEnum(s) = ty else {
+            return Err(LoadError::NotACEnum);
+        };
 
         let disc_value = load_unsigned(
             world.endian(),
             machine,
             addr,
             usize::try_from(s.byte_size).unwrap(),
-        )?.ok_or(LoadError::DataUnavailable)?;
+        )?
+        .ok_or(LoadError::DataUnavailable)?;
 
         let e = s
             .enumerators
@@ -505,7 +568,9 @@ pub struct Pointer {
 
 impl Pointer {
     fn is_probably_mut(&self) -> bool {
-        self.name.starts_with("&mut") || self.name.starts_with("*mut") || self.name.starts_with("*_")
+        self.name.starts_with("&mut")
+            || self.name.starts_with("*mut")
+            || self.name.starts_with("*_")
     }
 }
 
@@ -518,10 +583,13 @@ impl Load for Pointer {
     ) -> Result<Self, LoadError<M::Error>> {
         // TODO support pointer sizes
 
-        let Type::Pointer(s) = ty else { return Err(LoadError::NotAPointer); };
+        let Type::Pointer(s) = ty else {
+            return Err(LoadError::NotAPointer);
+        };
 
-        let value = load_unsigned(world.endian(),  machine, addr, world.pointer_size())?
-            .ok_or(LoadError::DataUnavailable)?;
+        let value =
+            load_unsigned(world.endian(), machine, addr, world.pointer_size())?
+                .ok_or(LoadError::DataUnavailable)?;
 
         Ok(Self {
             name: Cow::into_owned(ty.name(world)),

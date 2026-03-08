@@ -7,9 +7,14 @@
 // more cases later. In such cases I don't _want_ to rephrase it as an if let.
 #![allow(clippy::single_match)]
 
-use crate::{DebugDbBuilder, Encoding, Base, Struct, Enum, Variant, VariantShape, TemplateTypeParameter, Member, TypeId, CEnum, Union, Enumerator, Array, Pointer, RtArcReader, Subroutine, DeclCoord, Subprogram, SubParameter, InlinedSubroutine, StaticVariable};
+use crate::{
+    Array, Base, CEnum, DebugDbBuilder, DeclCoord, Encoding, Enum, Enumerator,
+    InlinedSubroutine, Member, Pointer, RtArcReader, StaticVariable, Struct,
+    SubParameter, Subprogram, Subroutine, TemplateTypeParameter, TypeId, Union,
+    Variant, VariantShape,
+};
 use indexmap::IndexMap;
-use std::{num::NonZeroU64, convert::Infallible};
+use std::{convert::Infallible, num::NonZeroU64};
 use thiserror::Error;
 
 use gimli::{constants as gim_con, UnitSectionOffset};
@@ -97,11 +102,17 @@ fn handle_nested_types(
                 parse_static_variable(dwarf, unit, cursor, builder)?;
             }
 
-            gim_con::DW_TAG_typedef | gim_con::DW_TAG_const_type | gim_con::DW_TAG_restrict_type => {
+            gim_con::DW_TAG_typedef
+            | gim_con::DW_TAG_const_type
+            | gim_con::DW_TAG_restrict_type => {
                 skip_entry(cursor)?;
             }
             _ => {
-                panic!("{} {:x?}", child.tag(), child.offset().to_unit_section_offset(unit));
+                panic!(
+                    "{} {:x?}",
+                    child.tag(),
+                    child.offset().to_unit_section_offset(unit)
+                );
                 //skip_entry(cursor)?;
             }
         }
@@ -262,14 +273,19 @@ fn parse_structure_type(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected decl_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected decl_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_line => {
-                decl_coord.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_decl_column => {
-                decl_coord.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             _ => (),
         }
@@ -470,14 +486,19 @@ fn parse_member(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected decl_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected decl_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_line => {
-                decl_coord.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_decl_column => {
-                decl_coord.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             _ => (),
         }
@@ -619,14 +640,19 @@ fn parse_variant(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected decl_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected decl_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_line => {
-                decl_coord.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_decl_column => {
-                decl_coord.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             _ => (),
         }
@@ -658,7 +684,14 @@ fn parse_variant(
     }
     let member = members.into_iter().next().unwrap();
 
-    Ok((discr_value, Variant { member, offset, decl_coord }))
+    Ok((
+        discr_value,
+        Variant {
+            member,
+            offset,
+            decl_coord,
+        },
+    ))
 }
 
 fn parse_enumeration_type(
@@ -717,7 +750,9 @@ fn parse_enumeration_type(
                 if let Some(child) = cursor.current() {
                     match child.tag() {
                         gim_con::DW_TAG_enumerator => {
-                            let e = parse_enumerator(dwarf, unit, cursor, byte_size)?;
+                            let e = parse_enumerator(
+                                dwarf, unit, cursor, byte_size,
+                            )?;
                             enumerators.insert(e.const_value, e);
                         }
                         _ => {
@@ -858,10 +893,7 @@ fn parse_subrange_type(
     _dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
     cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
-) -> Result<
-    (TypeId, u64, Option<u64>),
-    ParseError,
-> {
+) -> Result<(TypeId, u64, Option<u64>), ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_subrange_type);
 
@@ -945,7 +977,10 @@ fn parse_pointer_type(
     }
 
     if type_id.is_none() {
-        eprintln!("WARN: pointer type missing pointee typeid at: {:x?}", offset);
+        eprintln!(
+            "WARN: pointer type missing pointee typeid at: {:x?}",
+            offset
+        );
         return skip_entry(cursor);
     }
 
@@ -1065,7 +1100,8 @@ fn parse_subroutine_type(
         match attr.name() {
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
-                    return_type_id = Some(TypeId(o.to_unit_section_offset(unit)));
+                    return_type_id =
+                        Some(TypeId(o.to_unit_section_offset(unit)));
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
@@ -1193,7 +1229,6 @@ fn get_path(
             }
         }
         */
-
         _ => Err(ParseError::PathNotString),
     }
 }
@@ -1286,20 +1321,28 @@ fn parse_subprogram(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected decl_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected decl_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_line => {
-                decl_coord.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_decl_column => {
-                decl_coord.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_low_pc => {
                 if let gimli::AttributeValue::Addr(a) = attr.value() {
                     lo_pc = Some(a);
                 } else {
-                    eprintln!("WARN: unexpected low_pc type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected low_pc type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_high_pc => {
@@ -1307,7 +1350,8 @@ fn parse_subprogram(
             }
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
-                    return_type_id = Some(TypeId(o.to_unit_section_offset(unit)));
+                    return_type_id =
+                        Some(TypeId(o.to_unit_section_offset(unit)));
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
@@ -1324,7 +1368,10 @@ fn parse_subprogram(
                 {
                     abstract_origin = Some(UnitSectionOffset(o.0));
                 } else {
-                    panic!("unexpected abstract_origin type: {:?}", attr.value());
+                    panic!(
+                        "unexpected abstract_origin type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             // sibling
@@ -1359,14 +1406,13 @@ fn parse_subprogram(
                     }
                     gim_con::DW_TAG_template_type_parameter => {
                         template_type_parameters.push(
-                            parse_template_type_parameter(
-                                dwarf, unit, cursor,
-                            )?,
+                            parse_template_type_parameter(dwarf, unit, cursor)?,
                         );
                     }
                     gim_con::DW_TAG_inlined_subroutine => {
-                        inlines
-                            .push(parse_inlined_subroutine(dwarf, unit, cursor)?);
+                        inlines.push(parse_inlined_subroutine(
+                            dwarf, unit, cursor,
+                        )?);
                     }
                     // variable
                     // lexical_block
@@ -1438,7 +1484,10 @@ fn parse_sub_parameter(
                 {
                     abstract_origin = Some(UnitSectionOffset(o.0));
                 } else {
-                    panic!("unexpected abstract_origin type: {:?}", attr.value());
+                    panic!(
+                        "unexpected abstract_origin type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_file => {
@@ -1462,14 +1511,19 @@ fn parse_sub_parameter(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected decl_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected decl_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_line => {
-                decl_coord.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_decl_column => {
-                decl_coord.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl_coord.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_const_value => {
                 const_value = Some(attr.value().udata_value().unwrap());
@@ -1510,14 +1564,18 @@ fn parse_inlined_subroutine(
     for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_ranges => {
-                if let gimli::AttributeValue::RangeListsRef(roff) = attr.value() {
+                if let gimli::AttributeValue::RangeListsRef(roff) = attr.value()
+                {
                     let roff = dwarf.ranges_offset_from_raw(unit, roff);
                     let mut riter = dwarf.ranges(unit, roff)?;
                     while let Some(range) = riter.next()? {
                         pc_ranges.push(range);
                     }
                 } else {
-                    eprintln!("WARN: unexpected ranges type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected ranges type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_call_file => {
@@ -1541,20 +1599,28 @@ fn parse_inlined_subroutine(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected call_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected call_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_call_line => {
-                call_coord.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                call_coord.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_call_column => {
-                call_coord.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                call_coord.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_low_pc => {
                 if let gimli::AttributeValue::Addr(a) = attr.value() {
                     lo_pc = Some(a);
                 } else {
-                    eprintln!("WARN: unexpected low_pc type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected low_pc type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_high_pc => {
@@ -1568,7 +1634,10 @@ fn parse_inlined_subroutine(
                 {
                     abstract_origin = Some(UnitSectionOffset(o.0));
                 } else {
-                    panic!("unexpected abstract_origin type: {:?}", attr.value());
+                    panic!(
+                        "unexpected abstract_origin type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             _ => {
@@ -1593,8 +1662,9 @@ fn parse_inlined_subroutine(
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_inlined_subroutine => {
-                        inlines
-                            .push(parse_inlined_subroutine(dwarf, unit, cursor)?);
+                        inlines.push(parse_inlined_subroutine(
+                            dwarf, unit, cursor,
+                        )?);
                     }
                     gim_con::DW_TAG_formal_parameter => {
                         formal_parameters
@@ -1662,22 +1732,29 @@ fn parse_static_variable(
                                         break;
                                     }
                                     x => {
-                                        panic!("unexpected static location: {:?}", x);
+                                        panic!(
+                                            "unexpected static location: {:?}",
+                                            x
+                                        );
                                     }
                                 }
                             } else {
                                 panic!("unexpected eval results: {:?}", r);
                             }
                         }
-                        gimli::EvaluationResult::RequiresRelocatedAddress(a) => {
+                        gimli::EvaluationResult::RequiresRelocatedAddress(
+                            a,
+                        ) => {
                             result = eval.resume_with_relocated_address(a)?;
-
                         }
                         x => {
-                            println!("unhandled location expression at {:x?}: {:?}", offset, x);
+                            println!(
+                                "unhandled location expression at {:x?}: {:?}",
+                                offset, x
+                            );
                             return skip_entry(cursor);
                         }
-                    } 
+                    }
                 }
             }
             gim_con::DW_AT_type => {
@@ -1712,14 +1789,19 @@ fn parse_static_variable(
                         eprintln!("WARN: missing line program");
                     }
                 } else {
-                    eprintln!("WARN: unexpected call_file type: {:?}", attr.value());
+                    eprintln!(
+                        "WARN: unexpected call_file type: {:?}",
+                        attr.value()
+                    );
                 }
             }
             gim_con::DW_AT_decl_line => {
-                decl.line = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl.line =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_decl_column => {
-                decl.column = NonZeroU64::new(attr.value().udata_value().unwrap());
+                decl.column =
+                    NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             _ => {
                 //println!("skipping static var attr: {:x?}", attr.name());
@@ -1742,7 +1824,6 @@ fn parse_static_variable(
         builder.format_path(name.unwrap())
     };
 
-
     builder.record_variable(StaticVariable {
         offset,
         name,
@@ -1752,4 +1833,3 @@ fn parse_static_variable(
     });
     Ok(())
 }
-

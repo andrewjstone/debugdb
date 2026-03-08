@@ -1,7 +1,7 @@
-use crate::TypeId;
 use crate::model::*;
-use indexmap::IndexMap;
+use crate::TypeId;
 use core::hash::Hash;
+use indexmap::IndexMap;
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
@@ -92,7 +92,8 @@ pub trait Unify {
 }
 
 impl<T> Unify for Vec<T>
-    where T: Unify,
+where
+    T: Unify,
 {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
         if self.len() != other.len() {
@@ -106,19 +107,21 @@ impl<T> Unify for Vec<T>
 }
 
 impl<T> Unify for Option<T>
-    where T: Unify,
+where
+    T: Unify,
 {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
         match (self, other) {
             (Some(a), Some(b)) => a.try_unify(b, state),
-            _ => false
+            _ => false,
         }
     }
 }
 
 impl<K, T> Unify for IndexMap<K, T>
-    where T: Unify,
-          K: Eq + Hash,
+where
+    T: Unify,
+    K: Eq + Hash,
 {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
         if self.len() != other.len() {
@@ -127,7 +130,6 @@ impl<K, T> Unify for IndexMap<K, T>
 
         state.checkpoint(|state| {
             self.iter().all(|(ak, a)| a.try_unify(&other[ak], state))
-
         })
     }
 }
@@ -145,15 +147,23 @@ impl Unify for TypeId {
             // Insert a provisional substitution.
             state.equate(cself, cother);
             // Attempt recursive unification.
-            state.find_type(cself).try_unify(state.find_type(cother), state)
+            state
+                .find_type(cself)
+                .try_unify(state.find_type(cother), state)
         })
     }
 }
 
 impl Unify for Member {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
-        let self_easy = (&self.name, self.artificial, self.alignment, self.location);
-        let other_easy = (&other.name, other.artificial, other.alignment, other.location);
+        let self_easy =
+            (&self.name, self.artificial, self.alignment, self.location);
+        let other_easy = (
+            &other.name,
+            other.artificial,
+            other.alignment,
+            other.location,
+        );
         if self_easy != other_easy {
             return false;
         }
@@ -174,14 +184,19 @@ impl Unify for VariantShape {
             (Self::Zero, Self::Zero) => true,
             (Self::One(a), Self::One(b)) => a.try_unify(b, state),
             (
-                Self::Many { member: ma, variants: va, .. },
-                Self::Many { member: mb, variants: vb, .. },
-            ) => {
-                state.checkpoint(|state| {
-                    ma.try_unify(mb, state)
-                        && va.try_unify(vb, state)
-                })
-            }
+                Self::Many {
+                    member: ma,
+                    variants: va,
+                    ..
+                },
+                Self::Many {
+                    member: mb,
+                    variants: vb,
+                    ..
+                },
+            ) => state.checkpoint(|state| {
+                ma.try_unify(mb, state) && va.try_unify(vb, state)
+            }),
             _ => false,
         }
     }
@@ -199,17 +214,22 @@ impl Unify for TemplateTypeParameter {
 
 impl Unify for Struct {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
-        let self_easy = (&self.name, self.byte_size, self.alignment, self.tuple_like);
-        let other_easy = (&other.name, other.byte_size, other.alignment, other.tuple_like);
+        let self_easy =
+            (&self.name, self.byte_size, self.alignment, self.tuple_like);
+        let other_easy = (
+            &other.name,
+            other.byte_size,
+            other.alignment,
+            other.tuple_like,
+        );
         if self_easy != other_easy {
             return false;
         }
 
         state.checkpoint(|state| {
-            self.template_type_parameters.try_unify(
-                &other.template_type_parameters,
-                state,
-            ) && self.members.try_unify(&other.members, state)
+            self.template_type_parameters
+                .try_unify(&other.template_type_parameters, state)
+                && self.members.try_unify(&other.members, state)
         })
     }
 }
@@ -223,10 +243,9 @@ impl Unify for Union {
         }
 
         state.checkpoint(|state| {
-            self.template_type_parameters.try_unify(
-                &other.template_type_parameters,
-                state,
-            ) && self.members.try_unify(&other.members, state)
+            self.template_type_parameters
+                .try_unify(&other.template_type_parameters, state)
+                && self.members.try_unify(&other.members, state)
         })
     }
 }
@@ -240,10 +259,9 @@ impl Unify for Enum {
         }
 
         state.checkpoint(|state| {
-            self.template_type_parameters.try_unify(
-                &other.template_type_parameters,
-                state,
-            ) && self.shape.try_unify(&other.shape, state)
+            self.template_type_parameters
+                .try_unify(&other.template_type_parameters, state)
+                && self.shape.try_unify(&other.shape, state)
         })
     }
 }
@@ -261,8 +279,14 @@ impl Unify for Pointer {
 
 impl Unify for Base {
     fn try_unify(&self, other: &Self, _state: &mut State<'_>) -> bool {
-        let self_easy = (&self.name, self.encoding, self.byte_size, self.alignment);
-        let other_easy = (&other.name, other.encoding, other.byte_size, other.alignment);
+        let self_easy =
+            (&self.name, self.encoding, self.byte_size, self.alignment);
+        let other_easy = (
+            &other.name,
+            other.encoding,
+            other.byte_size,
+            other.alignment,
+        );
         self_easy == other_easy
     }
 }
@@ -274,7 +298,8 @@ impl Unify for Array {
         }
 
         state.checkpoint(|state| {
-            self.element_type_id.try_unify(&other.element_type_id, state)
+            self.element_type_id
+                .try_unify(&other.element_type_id, state)
                 && self.index_type_id.try_unify(&other.index_type_id, state)
         })
     }
@@ -288,8 +313,14 @@ impl Unify for Enumerator {
 
 impl Unify for CEnum {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
-        let self_easy = (&self.name, self.enum_class, self.byte_size, self.alignment);
-        let other_easy = (&other.name, other.enum_class, other.byte_size, other.alignment);
+        let self_easy =
+            (&self.name, self.enum_class, self.byte_size, self.alignment);
+        let other_easy = (
+            &other.name,
+            other.enum_class,
+            other.byte_size,
+            other.alignment,
+        );
         if self_easy != other_easy {
             return false;
         }
@@ -302,7 +333,9 @@ impl Unify for Subroutine {
     fn try_unify(&self, other: &Self, state: &mut State<'_>) -> bool {
         state.checkpoint(|state| {
             self.return_type_id.try_unify(&other.return_type_id, state)
-                && self.formal_parameters.try_unify(&other.formal_parameters, state)
+                && self
+                    .formal_parameters
+                    .try_unify(&other.formal_parameters, state)
         })
     }
 }

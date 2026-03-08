@@ -4,10 +4,13 @@ use anyhow::Result;
 use clap::Parser;
 use debugdb::value::ValueWithDb;
 use object::{Object, ObjectSegment};
-use rangemap::{RangeMap, RangeInclusiveMap};
+use rangemap::{RangeInclusiveMap, RangeMap};
 
-use debugdb::{Type, Encoding, TypeId, Struct, Member, DebugDb, Enum, VariantShape, value::Value};
-use debugdb::load::{Load, ImgMachine};
+use debugdb::load::{ImgMachine, Load};
+use debugdb::{
+    value::Value, DebugDb, Encoding, Enum, Member, Struct, Type, TypeId,
+    VariantShape,
+};
 use regex::Regex;
 
 #[derive(Debug, Parser)]
@@ -32,19 +35,21 @@ fn main() -> Result<()> {
     }
     let everything = debugdb::parse_file(&object)?;
 
-    println!("Loaded; {} types found in program.", everything.type_count());
+    println!(
+        "Loaded; {} types found in program.",
+        everything.type_count()
+    );
     println!("To quit: ^D or exit");
 
     let mut rl = rustyline::Editor::<(), _>::new()?;
     let prompt = ansi_term::Colour::Green.paint(">> ").to_string();
     let mut ctx = Ctx { segments };
-    'lineloop:
-    loop {
+    'lineloop: loop {
         match rl.readline(&prompt) {
             Ok(line) => {
                 let line = line.trim();
-                let (cmd, rest) = line.split_once(char::is_whitespace)
-                    .unwrap_or((line, ""));
+                let (cmd, rest) =
+                    line.split_once(char::is_whitespace).unwrap_or((line, ""));
                 if line.is_empty() {
                     continue 'lineloop;
                 }
@@ -55,7 +60,8 @@ fn main() -> Result<()> {
                     "exit" => break,
                     "help" => {
                         println!("commands:");
-                        let name_len = COMMANDS.iter()
+                        let name_len = COMMANDS
+                            .iter()
                             .map(|(name, _, _)| name.len())
                             .max()
                             .unwrap_or(12);
@@ -93,7 +99,7 @@ struct Goff(gimli::UnitSectionOffset);
 
 impl std::fmt::Display for Goff {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "<.debug_info+0x{:08x}>", self.0.0)
+        write!(f, "<.debug_info+0x{:08x}>", self.0 .0)
     }
 }
 
@@ -111,7 +117,13 @@ impl std::fmt::Display for NamedGoff<'_> {
         };
 
         write!(f, "{}", bold.paint(n))?;
-        write!(f, " {}<.debug_info+0x{:08x}>{}", dim.prefix(), self.1.0.0, dim.suffix())
+        write!(
+            f,
+            " {}<.debug_info+0x{:08x}>{}",
+            dim.prefix(),
+            self.1 .0 .0,
+            dim.suffix()
+        )
     }
 }
 
@@ -122,32 +134,49 @@ struct Ctx {
 type Command = fn(&debugdb::DebugDb, &mut Ctx, &str);
 
 static COMMANDS: &[(&str, Command, &str)] = &[
-    ("list", cmd_list, "print names of ALL types, or types containing a string"),
+    (
+        "list",
+        cmd_list,
+        "print names of ALL types, or types containing a string",
+    ),
     ("info", cmd_info, "print a summary of a type"),
     ("load", cmd_load, "loads additional segment data"),
     ("def", cmd_def, "print a type as a pseudo-Rust definition"),
     ("sizeof", cmd_sizeof, "print size of type in bytes"),
     ("alignof", cmd_alignof, "print alignment of type in bytes"),
     ("addr", cmd_addr, "look up information about an address"),
-    ("addr2line", cmd_addr2line, "look up line number information"),
+    (
+        "addr2line",
+        cmd_addr2line,
+        "look up line number information",
+    ),
     ("addr2stack", cmd_addr2stack, "display inlined stack frames"),
     ("vars", cmd_vars, "list static variables"),
     ("var", cmd_var, "get info on a static variable"),
     ("unwind", cmd_unwind, "get unwind info for an address"),
     ("decode", cmd_decode, "interpret RAM/ROM as a type"),
-    ("decode-async", cmd_decode_async, "interpret RAM/ROM as a suspended future"),
-    ("decode-blob", cmd_decode_blob, "attempt to interpret bytes as a type"),
-    ("decode-async-blob", cmd_decode_async_blob, "attempt to interpret bytes as a suspended future"),
+    (
+        "decode-async",
+        cmd_decode_async,
+        "interpret RAM/ROM as a suspended future",
+    ),
+    (
+        "decode-blob",
+        cmd_decode_blob,
+        "attempt to interpret bytes as a type",
+    ),
+    (
+        "decode-async-blob",
+        cmd_decode_async_blob,
+        "attempt to interpret bytes as a suspended future",
+    ),
 ];
 
-fn cmd_list(
-    db: &debugdb::DebugDb,
-    _ctx: &mut Ctx,
-    args: &str,
-) {
+fn cmd_list(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     // We're gonna make a copy to sort it, because alphabetical order seems
     // polite.
-    let mut types_copy = db.canonical_types()
+    let mut types_copy = db
+        .canonical_types()
         .filter(|(goff, _ty)| {
             if !args.is_empty() {
                 if let Some(name) = db.type_name(*goff) {
@@ -177,7 +206,12 @@ fn cmd_list(
 
         let aliases = db.aliases_of_type(goff);
         if let Some(aliases) = aliases {
-            println!("{:6} {} ({} aliases)", kind, NamedGoff(db, goff), aliases.len());
+            println!(
+                "{:6} {} ({} aliases)",
+                kind,
+                NamedGoff(db, goff),
+                aliases.len()
+            );
         } else {
             println!("{:6} {}", kind, NamedGoff(db, goff));
         }
@@ -226,13 +260,9 @@ fn simple_query_cmd(
     let type_name = args.trim();
     let types: Vec<_> = match parse_type_name(type_name) {
         None => return,
-        Some(ParsedTypeName::Name(n)) => {
-            db.types_by_name(n).collect()
-        }
+        Some(ParsedTypeName::Name(n)) => db.types_by_name(n).collect(),
         Some(ParsedTypeName::Goff(o)) => {
-            db.type_by_id(o).into_iter()
-                .map(|t| (o, t))
-                .collect()
+            db.type_by_id(o).into_iter().map(|t| (o, t)).collect()
         }
     };
     if type_name.starts_with("<.debug_") && type_name.ends_with('>') {
@@ -252,7 +282,8 @@ fn simple_query_cmd(
         }
         1 => false,
         n => {
-            println!("{}{} types found with that name:",
+            println!(
+                "{}{} types found with that name:",
                 ansi_term::Color::Yellow.paint("note: "),
                 n,
             );
@@ -261,7 +292,9 @@ fn simple_query_cmd(
     };
 
     for (goff, t) in types {
-        if many { println!() }
+        if many {
+            println!()
+        }
         print!("{}: ", NamedGoff(db, goff));
         q(db, t);
     }
@@ -281,7 +314,10 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
             }
             Type::Array(s) => {
                 println!("array type");
-                println!("- element type: {}", NamedGoff(db, s.element_type_id));
+                println!(
+                    "- element type: {}",
+                    NamedGoff(db, s.element_type_id)
+                );
                 println!("- lower bound: {}", s.lower_bound);
                 if let Some(n) = s.count {
                     println!("- count: {}", n);
@@ -296,7 +332,10 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                     println!("struct type");
                 }
                 if s.decl_coord.is_useful() {
-                    print!("- declared at: {}", s.decl_coord.file.as_deref().unwrap_or("???"));
+                    print!(
+                        "- declared at: {}",
+                        s.decl_coord.file.as_deref().unwrap_or("???")
+                    );
                     if let Some(n) = s.decl_coord.line {
                         print!(":{n}");
                     } else {
@@ -319,19 +358,31 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 if !s.template_type_parameters.is_empty() {
                     println!("- template type parameters:");
                     for ttp in &s.template_type_parameters {
-                        println!("  - {} = {}", ttp.name, NamedGoff(db, ttp.type_id));
+                        println!(
+                            "  - {} = {}",
+                            ttp.name,
+                            NamedGoff(db, ttp.type_id)
+                        );
                     }
                 }
                 if !s.members.is_empty() {
                     println!("- members:");
                     for (i, mem) in s.members.iter().enumerate() {
                         if let Some(name) = &mem.name {
-                            println!("  {i}. {name}: {}", NamedGoff(db, mem.type_id));
+                            println!(
+                                "  {i}. {name}: {}",
+                                NamedGoff(db, mem.type_id)
+                            );
                         } else {
-                            println!("  - <unnamed>: {}", NamedGoff(db, mem.type_id));
+                            println!(
+                                "  - <unnamed>: {}",
+                                NamedGoff(db, mem.type_id)
+                            );
                         }
                         println!("    - offset: {} bytes", mem.location);
-                        if let Some(s) = db.type_by_id(mem.type_id).unwrap().byte_size(db) {
+                        if let Some(s) =
+                            db.type_by_id(mem.type_id).unwrap().byte_size(db)
+                        {
                             println!("    - size: {} bytes", s);
                         }
                         if let Some(a) = mem.alignment {
@@ -360,7 +411,11 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 if !s.template_type_parameters.is_empty() {
                     println!("- type parameters:");
                     for ttp in &s.template_type_parameters {
-                        println!("  - {} = {}", ttp.name, NamedGoff(db, ttp.type_id));
+                        println!(
+                            "  - {} = {}",
+                            ttp.name,
+                            NamedGoff(db, ttp.type_id)
+                        );
                     }
                 }
 
@@ -370,7 +425,10 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                     }
                     debugdb::VariantShape::One(v) => {
                         println!("- single variant enum w/o discriminator");
-                        println!("  - content type: {}", NamedGoff(db, v.member.type_id));
+                        println!(
+                            "  - content type: {}",
+                            NamedGoff(db, v.member.type_id)
+                        );
                         println!("  - offset: {} bytes", v.member.location);
                         if let Some(a) = v.member.alignment {
                             println!("  - aligned: {} bytes", a);
@@ -379,7 +437,9 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                             println!("  - not artificial, oddly");
                         }
                     }
-                    debugdb::VariantShape::Many { member, variants, .. }=> {
+                    debugdb::VariantShape::Many {
+                        member, variants, ..
+                    } => {
                         if let Some(dname) = db.type_name(member.type_id) {
                             println!("- {} variants discriminated by {} at offset {}", variants.len(), dname, member.location);
                         } else {
@@ -388,13 +448,19 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                         if !member.artificial {
                             println!("  - not artificial, oddly");
                         }
-                        
+
                         // Print explicit values first
                         for (val, var) in variants {
                             if let Some(val) = val {
                                 println!("- when discriminator == {}", val);
-                                println!("  - contains type: {}", NamedGoff(db, var.member.type_id));
-                                println!("  - at offset: {} bytes", var.member.location);
+                                println!(
+                                    "  - contains type: {}",
+                                    NamedGoff(db, var.member.type_id)
+                                );
+                                println!(
+                                    "  - at offset: {} bytes",
+                                    var.member.location
+                                );
                                 if let Some(a) = var.member.alignment {
                                     println!("  - aligned: {} bytes", a);
                                 }
@@ -404,8 +470,14 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                         for (val, var) in variants {
                             if val.is_none() {
                                 println!("- any other discriminator value");
-                                println!("  - contains type: {}", NamedGoff(db, var.member.type_id));
-                                println!("  - at offset: {} bytes", var.member.location);
+                                println!(
+                                    "  - contains type: {}",
+                                    NamedGoff(db, var.member.type_id)
+                                );
+                                println!(
+                                    "  - at offset: {} bytes",
+                                    var.member.location
+                                );
                                 if let Some(a) = var.member.alignment {
                                     println!("  - aligned: {} bytes", a);
                                 }
@@ -425,7 +497,6 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 println!("- {} values defined", s.enumerators.len());
                 for e in s.enumerators.values() {
                     println!("  - {} = 0x{:x}", e.name, e.const_value);
-
                 }
             }
             Type::Union(s) => {
@@ -435,16 +506,27 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 if !s.template_type_parameters.is_empty() {
                     println!("- template type parameters:");
                     for ttp in &s.template_type_parameters {
-                        println!("  - {} = {}", ttp.name, NamedGoff(db, ttp.type_id));
+                        println!(
+                            "  - {} = {}",
+                            ttp.name,
+                            NamedGoff(db, ttp.type_id)
+                        );
                     }
                 }
                 if !s.members.is_empty() {
                     println!("- members:");
                     for mem in &s.members {
                         if let Some(name) = &mem.name {
-                            println!("  - {}: {}", name, NamedGoff(db, mem.type_id));
+                            println!(
+                                "  - {}: {}",
+                                name,
+                                NamedGoff(db, mem.type_id)
+                            );
                         } else {
-                            println!("  - <unnamed>: {}", NamedGoff(db, mem.type_id));
+                            println!(
+                                "  - <unnamed>: {}",
+                                NamedGoff(db, mem.type_id)
+                            );
                         }
                         println!("    - offset: {} bytes", mem.location);
                         if let Some(a) = mem.alignment {
@@ -547,7 +629,7 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                     }
                     print!(">");
                 }
-                
+
                 if s.members.is_empty() {
                     println!(";");
                 } else if s.tuple_like {
@@ -560,9 +642,16 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                     println!(" {{");
                     for mem in &s.members {
                         if let Some(name) = &mem.name {
-                            println!("    {}: {},", name, db.type_name(mem.type_id).unwrap());
+                            println!(
+                                "    {}: {},",
+                                name,
+                                db.type_name(mem.type_id).unwrap()
+                            );
                         } else {
-                            println!("    ANON: {},", db.type_name(mem.type_id).unwrap());
+                            println!(
+                                "    ANON: {},",
+                                db.type_name(mem.type_id).unwrap()
+                            );
                         }
                     }
                     println!("}}");
@@ -588,22 +677,27 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                             print!("    ANON");
                         }
 
-                        let mty = db.type_by_id(var.member.type_id)
-                            .unwrap();
+                        let mty = db.type_by_id(var.member.type_id).unwrap();
                         if let Type::Struct(s) = mty {
                             if !s.members.is_empty() {
                                 if s.tuple_like {
                                     println!("(");
                                     for mem in &s.members {
-                                        let mtn = db.type_name(mem.type_id).unwrap();
+                                        let mtn =
+                                            db.type_name(mem.type_id).unwrap();
                                         println!("        {},", mtn);
                                     }
                                     print!("    )");
                                 } else {
                                     println!(" {{");
                                     for mem in &s.members {
-                                        let mtn = db.type_name(mem.type_id).unwrap();
-                                        println!("        {}: {},", mem.name.as_ref().unwrap(), mtn);
+                                        let mtn =
+                                            db.type_name(mem.type_id).unwrap();
+                                        println!(
+                                            "        {}: {},",
+                                            mem.name.as_ref().unwrap(),
+                                            mtn
+                                        );
                                     }
                                     print!("    }}");
                                 }
@@ -614,7 +708,7 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
 
                         println!(",");
                     }
-                    debugdb::VariantShape::Many { variants, .. }=> {
+                    debugdb::VariantShape::Many { variants, .. } => {
                         for var in variants.values() {
                             if let Some(name) = &var.member.name {
                                 print!("    {}", name);
@@ -622,22 +716,30 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                                 print!("    ANON");
                             }
 
-                            let mty = db.type_by_id(var.member.type_id)
-                                .unwrap();
+                            let mty =
+                                db.type_by_id(var.member.type_id).unwrap();
                             if let Type::Struct(s) = mty {
                                 if !s.members.is_empty() {
                                     if s.tuple_like {
                                         println!("(");
                                         for mem in &s.members {
-                                            let mtn = db.type_name(mem.type_id).unwrap();
+                                            let mtn = db
+                                                .type_name(mem.type_id)
+                                                .unwrap();
                                             println!("        {},", mtn);
                                         }
                                         print!("    )");
                                     } else {
                                         println!(" {{");
                                         for mem in &s.members {
-                                            let mtn = db.type_name(mem.type_id).unwrap();
-                                            println!("        {}: {},", mem.name.as_ref().unwrap(), mtn);
+                                            let mtn = db
+                                                .type_name(mem.type_id)
+                                                .unwrap();
+                                            println!(
+                                                "        {}: {},",
+                                                mem.name.as_ref().unwrap(),
+                                                mtn
+                                            );
                                         }
                                         print!("    }}");
                                     }
@@ -651,7 +753,6 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                     }
                 }
                 println!("}}");
-
             }
             Type::CEnum(s) => {
                 println!("enum {} {{", s.name);
@@ -674,9 +775,16 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 println!(" {{");
                 for mem in &s.members {
                     if let Some(name) = &mem.name {
-                        println!("    {}: {},", name, db.type_name(mem.type_id).unwrap());
+                        println!(
+                            "    {}: {},",
+                            name,
+                            db.type_name(mem.type_id).unwrap()
+                        );
                     } else {
-                        println!("    ANON: {},", db.type_name(mem.type_id).unwrap());
+                        println!(
+                            "    ANON: {},",
+                            db.type_name(mem.type_id).unwrap()
+                        );
                     }
                 }
                 println!("}}");
@@ -798,8 +906,13 @@ fn cmd_vars(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
             continue;
         }
 
-        println!("0x{:0width$x} {}: {}", v.location, v.name, NamedGoff(db, v.type_id),
-            width = db.pointer_size() * 2);
+        println!(
+            "0x{:0width$x} {}: {}",
+            v.location,
+            v.name,
+            NamedGoff(db, v.type_id),
+            width = db.pointer_size() * 2
+        );
     }
 }
 
@@ -816,12 +929,13 @@ fn cmd_var(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
         println!("{} @ {}", v.name, Goff(v.offset));
         println!("- type: {}", NamedGoff(db, v.type_id));
         println!("- address: 0x{:x}", v.location);
-        let Some(ty) = db.type_by_id(v.type_id) else { continue };
+        let Some(ty) = db.type_by_id(v.type_id) else {
+            continue;
+        };
 
         match Value::from_state(&ctx.segments, v.location, db, ty) {
             Ok(v) => {
-                println!("- current contents: {}",
-                    ValueWithDb(v, db));
+                println!("- current contents: {}", ValueWithDb(v, db));
             }
             Err(e) => {
                 println!("- unable to display: {e}");
@@ -850,7 +964,10 @@ fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     match es.len() {
         0 => println!("Nothing known about address 0x{:x}.", addr),
         1 => (),
-        n => println!("note: {} overlapping entities claim address 0x{:x}", n, addr),
+        n => println!(
+            "note: {} overlapping entities claim address 0x{:x}",
+            n, addr
+        ),
     }
 
     let bold = ansi_term::Style::new().bold();
@@ -863,8 +980,7 @@ fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
             debugdb::EntityId::Var(vid) => {
                 let v = db.static_variable_by_id(vid).unwrap();
                 println!("static {}", bold.paint(&v.name));
-                println!("- range 0x{:x}..0x{:x}", 
-                    e.range.start, e.range.end);
+                println!("- range 0x{:x}..0x{:x}", e.range.start, e.range.end);
                 println!("- type {}", NamedGoff(db, v.type_id));
 
                 // Try to determine path within type.
@@ -877,19 +993,22 @@ fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 } else {
                     println!("subprogram {}", bold.paint("ANON"));
                 }
-                println!("- range 0x{:x}..0x{:x}", 
-                    e.range.start, e.range.end);
+                println!("- range 0x{:x}..0x{:x}", e.range.start, e.range.end);
                 match db.static_stack_for_pc(addr) {
                     Ok(Some(trc)) => {
                         println!("- stack fragment with inlines:");
                         for (i, record) in trc.iter().rev().enumerate() {
-                            let subp = db.subprogram_by_id(record.subprogram).unwrap();
+                            let subp =
+                                db.subprogram_by_id(record.subprogram).unwrap();
 
                             print!("    {:4}   ", i);
                             if let Some(n) = &subp.name {
                                 println!("{}", bold.paint(n));
                             } else {
-                                println!("{}", bold.paint("<unknown-subprogram>"));
+                                println!(
+                                    "{}",
+                                    bold.paint("<unknown-subprogram>")
+                                );
                             }
                             print!("{}", dim.prefix());
                             print!("        {}:", record.file);
@@ -919,11 +1038,7 @@ fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn offset_to_path(
-    db: &debugdb::DebugDb,
-    tid: TypeId,
-    offset: u64,
-) {
+fn offset_to_path(db: &debugdb::DebugDb, tid: TypeId, offset: u64) {
     let t = db.type_by_id(tid).unwrap();
     match t {
         Type::Array(a) => {
@@ -949,7 +1064,10 @@ fn offset_to_path(
                 if let Some(msz) = mt.byte_size(db) {
                     if msz > 0 {
                         if let Some(n) = &m.name {
-                            println!("  - .{} +0x{:x} (in {})", n, new_offset, s.name);
+                            println!(
+                                "  - .{} +0x{:x} (in {})",
+                                n, new_offset, s.name
+                            );
                         } else {
                             return;
                         }
@@ -981,7 +1099,12 @@ fn cmd_unwind(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     use gimli::UnwindSection;
     let mut ctx = gimli::UnwindContext::new();
     let bases = gimli::BaseAddresses::default();
-    match db.debug_frame.unwind_info_for_address(&bases, &mut ctx, addr, gimli::DebugFrame::cie_from_offset) {
+    match db.debug_frame.unwind_info_for_address(
+        &bases,
+        &mut ctx,
+        addr,
+        gimli::DebugFrame::cie_from_offset,
+    ) {
         Ok(ui) => {
             println!("saved args: {} bytes", ui.saved_args_size());
             print!("cfa: ");
@@ -1054,7 +1177,9 @@ fn struct_picture_inner<'a, N: Eq + Clone + Display>(
     for (i, m, in_legend) in members {
         if in_legend {
             member_labels.push({
-                let label = if db.type_by_id(m.type_id).unwrap().byte_size(db) == Some(0) {
+                let label = if db.type_by_id(m.type_id).unwrap().byte_size(db)
+                    == Some(0)
+                {
                     "(ZST)".to_string()
                 } else {
                     i.to_string()
@@ -1113,11 +1238,13 @@ fn enum_picture(db: &DebugDb, s: &Enum, width: usize) {
             println!("this enum has only one variant (TODO)");
         }
         VariantShape::Many { member, .. } => {
-            let Some(dlen) = db.type_by_id(member.type_id).unwrap().byte_size(db) else {
+            let Some(dlen) =
+                db.type_by_id(member.type_id).unwrap().byte_size(db)
+            else {
                 println!("discriminator type has no size?");
                 return;
             };
-            let drange = member.location .. member.location + dlen;
+            let drange = member.location..member.location + dlen;
             println!("Discriminator position:");
             byte_picture(size, width, |off| {
                 if drange.contains(&off) {
@@ -1225,7 +1352,11 @@ fn byte_picture(
         }
     }
     print!("     +");
-    let final_bar = if size % width == 0 { width } else { size % width };
+    let final_bar = if size % width == 0 {
+        width
+    } else {
+        size % width
+    };
     for _ in 0..final_bar {
         print!("------+");
     }
@@ -1248,13 +1379,9 @@ fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     };
     let types: Vec<_> = match parse_type_name(typestr.trim()) {
         None => return,
-        Some(ParsedTypeName::Name(n)) => {
-            db.types_by_name(n).collect()
-        }
+        Some(ParsedTypeName::Name(n)) => db.types_by_name(n).collect(),
         Some(ParsedTypeName::Goff(o)) => {
-            db.type_by_id(o).into_iter()
-                .map(|t| (o, t))
-                .collect()
+            db.type_by_id(o).into_iter().map(|t| (o, t)).collect()
         }
     };
 
@@ -1265,7 +1392,8 @@ fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
         }
         1 => false,
         n => {
-            println!("{}{} types found with that name:",
+            println!(
+                "{}{} types found with that name:",
                 ansi_term::Color::Yellow.paint("note: "),
                 n,
             );
@@ -1274,7 +1402,9 @@ fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     };
 
     for (goff, t) in types {
-        if many { println!() }
+        if many {
+            println!()
+        }
         println!("{}: ", NamedGoff(db, goff));
         match Value::from_state(&ctx.segments, addr, db, t) {
             Ok(v) => {
@@ -1303,13 +1433,9 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     };
     let types: Vec<_> = match parse_type_name(typestr.trim()) {
         None => return,
-        Some(ParsedTypeName::Name(n)) => {
-            db.types_by_name(n).collect()
-        }
+        Some(ParsedTypeName::Name(n)) => db.types_by_name(n).collect(),
         Some(ParsedTypeName::Goff(o)) => {
-            db.type_by_id(o).into_iter()
-                .map(|t| (o, t))
-                .collect()
+            db.type_by_id(o).into_iter().map(|t| (o, t)).collect()
         }
     };
 
@@ -1320,7 +1446,8 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
         }
         1 => false,
         n => {
-            println!("{}{} types found with that name:",
+            println!(
+                "{}{} types found with that name:",
                 ansi_term::Color::Yellow.paint("note: "),
                 n,
             );
@@ -1329,7 +1456,9 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     };
 
     for (goff, t) in types {
-        if many { println!() }
+        if many {
+            println!()
+        }
         println!("{}: ", NamedGoff(db, goff));
         let mut v = &match Value::from_state(&ctx.segments, addr, db, t) {
             Ok(v) => v,
@@ -1348,7 +1477,11 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
             }
             first = false;
             let Value::Enum(e) = v else {
-                println!("{}hand-rolled future{}", bold.prefix(), bold.suffix());
+                println!(
+                    "{}hand-rolled future{}",
+                    bold.prefix(),
+                    bold.suffix()
+                );
                 println!("    type: {}", v.type_name());
                 break;
             };
@@ -1358,7 +1491,11 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
             };
             let name = &parts[1];
             let parms = parts.get(2).map(|m| m.as_str()).unwrap_or("");
-            println!("async fn {}{name}{parms}{}", bold.prefix(), bold.suffix());
+            println!(
+                "async fn {}{name}{parms}{}",
+                bold.prefix(),
+                bold.suffix()
+            );
             let state = &e.disc;
             let state_name = &e.value.name;
 
@@ -1399,13 +1536,9 @@ fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     let type_name = args.trim();
     let types: Vec<_> = match parse_type_name(type_name) {
         None => return,
-        Some(ParsedTypeName::Name(n)) => {
-            db.types_by_name(n).collect()
-        }
+        Some(ParsedTypeName::Name(n)) => db.types_by_name(n).collect(),
         Some(ParsedTypeName::Goff(o)) => {
-            db.type_by_id(o).into_iter()
-                .map(|t| (o, t))
-                .collect()
+            db.type_by_id(o).into_iter().map(|t| (o, t)).collect()
         }
     };
 
@@ -1416,7 +1549,8 @@ fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
         }
         1 => false,
         n => {
-            println!("{}{} types found with that name:",
+            println!(
+                "{}{} types found with that name:",
                 ansi_term::Color::Yellow.paint("note: "),
                 n,
             );
@@ -1460,8 +1594,11 @@ fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
             }
         }
 
-        let bytes = hexits.chunks_exact(2)
-            .map(|chunk| u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16))
+        let bytes = hexits
+            .chunks_exact(2)
+            .map(|chunk| {
+                u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)
+            })
             .collect::<Result<Vec<_>, _>>();
         match bytes {
             Err(e) => {
@@ -1473,7 +1610,9 @@ fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 
     for (goff, t) in types {
-        if many { println!() }
+        if many {
+            println!()
+        }
         println!("{}: ", NamedGoff(db, goff));
         let Some(size) = t.byte_size(db) else {
             println!("  (type is unsized, cannot decode)");
@@ -1504,13 +1643,9 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     let type_name = args.trim();
     let types: Vec<_> = match parse_type_name(type_name) {
         None => return,
-        Some(ParsedTypeName::Name(n)) => {
-            db.types_by_name(n).collect()
-        }
+        Some(ParsedTypeName::Name(n)) => db.types_by_name(n).collect(),
         Some(ParsedTypeName::Goff(o)) => {
-            db.type_by_id(o).into_iter()
-                .map(|t| (o, t))
-                .collect()
+            db.type_by_id(o).into_iter().map(|t| (o, t)).collect()
         }
     };
 
@@ -1521,7 +1656,8 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
         }
         1 => false,
         n => {
-            println!("{}{} types found with that name:",
+            println!(
+                "{}{} types found with that name:",
                 ansi_term::Color::Yellow.paint("note: "),
                 n,
             );
@@ -1565,8 +1701,11 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
             }
         }
 
-        let bytes = hexits.chunks_exact(2)
-            .map(|chunk| u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16))
+        let bytes = hexits
+            .chunks_exact(2)
+            .map(|chunk| {
+                u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)
+            })
             .collect::<Result<Vec<_>, _>>();
         match bytes {
             Err(e) => {
@@ -1578,7 +1717,9 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 
     for (goff, t) in types {
-        if many { println!() }
+        if many {
+            println!()
+        }
         println!("{}: ", NamedGoff(db, goff));
         let Some(size) = t.byte_size(db) else {
             println!("  (type is unsized, cannot decode)");
@@ -1657,12 +1798,7 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-
-fn cmd_load(
-    _db: &debugdb::DebugDb,
-    ctx: &mut Ctx,
-    args: &str,
-) {
+fn cmd_load(_db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     let args = args.trim();
     let words = args.split_whitespace().collect::<Vec<_>>();
     if words.len() != 2 {

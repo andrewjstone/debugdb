@@ -2,11 +2,11 @@
 //! debug information, and turning them into Rust values in the observing
 //! program.
 
-use crate::{Encoding, Enum, Type, DebugDb, Variant, VariantShape};
+use crate::{DebugDb, Encoding, Enum, Type, Variant, VariantShape};
 use gimli::Endianity;
 use rangemap::RangeInclusiveMap;
+use std::convert::{Infallible, TryFrom};
 use thiserror::Error;
-use std::convert::{TryFrom, Infallible};
 
 pub trait Load: Sized {
     fn from_state<M: Machine>(
@@ -40,7 +40,11 @@ pub trait Machine {
     /// or to get the data -- for instance, if a USB transaction to a JTAG probe
     /// fails, or if we get a filesystem error reading an ELF file. In that
     /// case, we'll return `Err`.
-    fn read_memory(&self, address: u64, dest: &mut [u8]) -> Result<usize, Self::Error>;
+    fn read_memory(
+        &self,
+        address: u64,
+        dest: &mut [u8],
+    ) -> Result<usize, Self::Error>;
 }
 
 #[derive(Clone)]
@@ -50,21 +54,26 @@ pub struct ImgMachine {
 
 impl ImgMachine {
     pub fn new(img: impl Into<Vec<u8>>) -> Self {
-        Self {
-            img: img.into(),
-        }
+        Self { img: img.into() }
     }
 }
 
 impl Machine for ImgMachine {
     type Error = Infallible;
 
-    fn read_memory(&self, address: u64, dest: &mut [u8]) -> Result<usize, Self::Error> {
-        let Ok(address) = usize::try_from(address) else { return Ok(0) };
-        let end = address.checked_add(dest.len())
-            .unwrap_or(usize::MAX);
+    fn read_memory(
+        &self,
+        address: u64,
+        dest: &mut [u8],
+    ) -> Result<usize, Self::Error> {
+        let Ok(address) = usize::try_from(address) else {
+            return Ok(0);
+        };
+        let end = address.checked_add(dest.len()).unwrap_or(usize::MAX);
         let end = usize::min(end, self.img.len());
-        let Some(chunk) = end.checked_sub(address) else { return Ok(0) };
+        let Some(chunk) = end.checked_sub(address) else {
+            return Ok(0);
+        };
 
         dest[..chunk].copy_from_slice(&self.img[address..end]);
         Ok(chunk)
@@ -74,15 +83,24 @@ impl Machine for ImgMachine {
 impl Machine for RangeInclusiveMap<u64, Vec<u8>> {
     type Error = Infallible;
 
-    fn read_memory(&self, address: u64, dest: &mut [u8]) -> Result<usize, Self::Error> {
-        let Some((range, segment)) = self.get_key_value(&address) else { return Ok(0) };
+    fn read_memory(
+        &self,
+        address: u64,
+        dest: &mut [u8],
+    ) -> Result<usize, Self::Error> {
+        let Some((range, segment)) = self.get_key_value(&address) else {
+            return Ok(0);
+        };
         let offset = address - range.start();
 
-        let Ok(offset) = usize::try_from(offset) else { return Ok(0) };
-        let end = offset.checked_add(dest.len())
-            .unwrap_or(usize::MAX);
+        let Ok(offset) = usize::try_from(offset) else {
+            return Ok(0);
+        };
+        let end = offset.checked_add(dest.len()).unwrap_or(usize::MAX);
         let end = usize::min(end, segment.len());
-        let Some(chunk) = end.checked_sub(offset) else { return Ok(0) };
+        let Some(chunk) = end.checked_sub(offset) else {
+            return Ok(0);
+        };
 
         dest[..chunk].copy_from_slice(&segment[offset..end]);
         Ok(chunk)
@@ -116,10 +134,7 @@ pub enum LoadError<E> {
     #[error("array has element type without defined size")]
     UnsizedElement,
     #[error("array too big: {count} x {elt_size}-byte elements")]
-    ArrayTooBig {
-        count: u64,
-        elt_size: u64,
-    },
+    ArrayTooBig { count: u64, elt_size: u64 },
     #[error("type too big for this platform: {0} bytes")]
     TypeTooBig(u64),
     #[error("array type required")]
@@ -139,7 +154,7 @@ pub enum LoadError<E> {
     #[error("expected member `{0}` not found")]
     MissingMember(String),
     #[error("a type named {expected} was required, but found: {got}")]
-    WrongTypeName { expected: String, got: String},
+    WrongTypeName { expected: String, got: String },
     #[error("some of the bytes required to load this type are not present in the machine")]
     DataUnavailable,
 
@@ -226,13 +241,7 @@ impl Load for u8 {
         _world: &DebugDb,
         ty: &Type,
     ) -> Result<u8, LoadError<M::Error>> {
-        generic_base_load(
-            Encoding::Unsigned,
-            ty,
-            machine,
-            addr,
-            |[b]| b,
-        )
+        generic_base_load(Encoding::Unsigned, ty, machine, addr, |[b]| b)
     }
 }
 
@@ -243,13 +252,7 @@ impl Load for i8 {
         _world: &DebugDb,
         ty: &Type,
     ) -> Result<Self, LoadError<M::Error>> {
-        generic_base_load(
-            Encoding::Signed,
-            ty,
-            machine,
-            addr,
-            |[b]| b as i8,
-        )
+        generic_base_load(Encoding::Signed, ty, machine, addr, |[b]| b as i8)
     }
 }
 
@@ -316,7 +319,7 @@ impl Load for core::sync::atomic::AtomicU32 {
         };
 
         let value_ty = world.type_by_id(m_value.type_id).unwrap();
-        
+
         let x = u32::from_state(machine, addr, world, value_ty)?;
         Ok(core::sync::atomic::AtomicU32::new(x))
     }
@@ -336,14 +339,18 @@ impl<T: Load> Load for Vec<T> {
             }
             let elty = world.type_by_id(s.element_type_id).unwrap();
 
-            let elt_size = elty
-                .byte_size(world)
-                .ok_or(LoadError::UnsizedElement)?;
+            let elt_size =
+                elty.byte_size(world).ok_or(LoadError::UnsizedElement)?;
             let elt_size = elt_size.max(elty.alignment(world).unwrap_or(0));
 
             let mut elts = Vec::with_capacity(usize::try_from(count).unwrap());
             for i in 0..count {
-                elts.push(T::from_state(machine, addr + i * elt_size, world, elty)?);
+                elts.push(T::from_state(
+                    machine,
+                    addr + i * elt_size,
+                    world,
+                    elty,
+                )?);
             }
             Ok(elts)
         } else {
@@ -434,9 +441,7 @@ pub(crate) fn choose_variant<'e, M: Machine>(
     e: &'e Enum,
 ) -> Result<&'e Variant, LoadError<M::Error>> {
     match &e.shape {
-        VariantShape::Zero => {
-            Err(LoadError::Uninhabited)
-        }
+        VariantShape::Zero => Err(LoadError::Uninhabited),
         VariantShape::One(v) => Ok(v),
         VariantShape::Many {
             member, variants, ..
