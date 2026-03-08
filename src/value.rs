@@ -267,7 +267,7 @@ impl UseTable {
         Self(rewrites)
     }
 
-    fn rewrite<'a>(&'a self, name: &'a str) -> &str {
+    fn rewrite<'a>(&'a self, name: &'a str) -> &'a str {
         self.0.get(name).map(String::as_str).unwrap_or(name)
     }
 }
