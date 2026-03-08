@@ -131,6 +131,7 @@ impl Type {
                     }
                     Self::Pointer(_) => break Some(factor * pointer_size as u64),
                     Self::Subroutine(_) => break None,
+                    Self::Unresolved(_) => break None,
 
                     _ => panic!("inconsistency btw byte_size_early and inherent_byte_size"),
                 },

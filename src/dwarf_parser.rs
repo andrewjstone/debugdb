@@ -100,7 +100,8 @@ fn handle_nested_types(
 
             gim_con::DW_TAG_typedef
             | gim_con::DW_TAG_const_type
-            | gim_con::DW_TAG_restrict_type => {
+            | gim_con::DW_TAG_restrict_type
+            | gim_con::DW_TAG_unspecified_type => {
                 skip_entry(cursor)?;
             }
             _ => {
@@ -463,7 +464,15 @@ fn parse_member(
                 alignment = Some(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_data_member_location => {
-                location = Some(attr.value().udata_value().unwrap());
+                if attr.value().udata_value().is_none() {
+                    eprintln!(
+                        "WARN: Unexpected type where we expected \
+                         a constant for DW_AT_data_member_location: {:?}",
+                        attr.form()
+                    );
+                } else {
+                    location = Some(attr.value().udata_value().unwrap());
+                }
             }
             gim_con::DW_AT_decl_file => {
                 if let gimli::AttributeValue::FileIndex(f) = attr.value() {
@@ -766,7 +775,7 @@ fn parse_enumeration_type(
     }
 
     let byte_size = byte_size.unwrap();
-    let name = name.unwrap();
+    let name = name.unwrap_or_else(|| "anonymous".to_string());
 
     let mut enumerators = IndexMap::default();
 
@@ -891,8 +900,7 @@ fn parse_array_type(
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_subrange_type => {
-                        subrange =
-                            Some(parse_subrange_type(dwarf, unit, cursor)?);
+                        subrange = parse_subrange_type(dwarf, unit, cursor)?;
                     }
                     _ => {
                         skip_entry(cursor)?;
@@ -903,6 +911,14 @@ fn parse_array_type(
             }
         }
     }
+    if subrange.is_none() {
+        eprintln!(
+            "WARN: skipping array because subrange type is missing at: {:x?}",
+            offset
+        );
+        return Ok(());
+    }
+
     let (index_type_id, lower_bound, count) = subrange.unwrap();
 
     builder.record_type(Array {
@@ -919,9 +935,11 @@ fn parse_subrange_type(
     _dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
     cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
-) -> Result<(TypeId, u64, Option<u64>), ParseError> {
+) -> Result<Option<(TypeId, u64, Option<u64>)>, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_subrange_type);
+
+    let offset = entry.offset().to_unit_section_offset(unit);
 
     let mut type_id = None;
     let mut lower_bound = None;
@@ -950,7 +968,13 @@ fn parse_subrange_type(
         }
     }
 
-    let type_id = TypeId(type_id.unwrap());
+    // TODO: Not really sure how to fix this. We can't just make up a type id
+    // here. We just return `None` so that we don't fail on some obscure C type.
+    let Some(unit_section_offset) = type_id else {
+        eprintln!("WARN: subrange type missing typeid at: {:x?}", offset);
+        return Ok(None);
+    };
+    let type_id = TypeId(unit_section_offset);
     let lower_bound = lower_bound.unwrap_or(0);
 
     if entry.has_children() {
@@ -962,7 +986,7 @@ fn parse_subrange_type(
             }
         }
     }
-    Ok((type_id, lower_bound, count))
+    Ok(Some((type_id, lower_bound, count)))
 }
 
 fn parse_pointer_type(
@@ -1372,7 +1396,12 @@ fn parse_subprogram(
                 }
             }
             gim_con::DW_AT_high_pc => {
-                hi_pc = Some(attr.value().udata_value().unwrap());
+                // For linked in C libraries, we sometimes see this.
+                if let gimli::AttributeValue::Addr(a) = attr.value() {
+                    hi_pc = Some(a);
+                } else {
+                    hi_pc = Some(attr.value().udata_value().unwrap());
+                }
             }
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -1552,7 +1581,9 @@ fn parse_sub_parameter(
                     NonZeroU64::new(attr.value().udata_value().unwrap());
             }
             gim_con::DW_AT_const_value => {
-                const_value = Some(attr.value().udata_value().unwrap());
+                // We ignore unreadable constants for now. They are
+                // uncommon enough.
+                const_value = attr.value().udata_value();
             }
             // location
             _ => {
@@ -1650,7 +1681,12 @@ fn parse_inlined_subroutine(
                 }
             }
             gim_con::DW_AT_high_pc => {
-                hi_pc = Some(attr.value().udata_value().unwrap());
+                // For linked in C libraries, we sometimes see this.
+                if let gimli::AttributeValue::Addr(a) = attr.value() {
+                    hi_pc = Some(a);
+                } else {
+                    hi_pc = Some(attr.value().udata_value().unwrap());
+                }
             }
             gim_con::DW_AT_abstract_origin => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -1765,7 +1801,12 @@ fn parse_static_variable(
                                     }
                                 }
                             } else {
-                                panic!("unexpected eval results: {:?}", r);
+                                // TODO: We have 2 pieces (a 64 bit addr and a 32 bit addr).
+                                // Not sure what to do with it, so just skip it for now?
+                                //
+                                // previously we called panic!("unexpected eval results: {:?}", r);
+                                println!("unexpected eval results: {:?}", r);
+                                return skip_entry(cursor);
                             }
                         }
                         gimli::EvaluationResult::RequiresRelocatedAddress(
@@ -1840,6 +1881,11 @@ fn parse_static_variable(
         return Ok(());
     }
 
+    if type_id.is_none() {
+        eprintln!("WARN: missing type id for static variable at {:x?}", offset);
+        // skip!
+        return Ok(());
+    }
     let type_id = TypeId(type_id.unwrap());
     let location = location.unwrap();
 
