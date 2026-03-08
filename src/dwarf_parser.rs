@@ -35,18 +35,16 @@ impl From<Infallible> for ParseError {
 pub fn parse_entry(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
 
-    let mut attrs = entry.attrs();
-    while attrs.next()?.is_some() {
-        // discard
-    }
+    let _attrs = entry.attrs();
+    // discard attrs
 
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if cursor.current().is_some() {
                 handle_nested_types(dwarf, unit, cursor, builder)?;
             } else {
@@ -63,7 +61,7 @@ pub fn parse_entry(
 fn handle_nested_types(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     if let Some(child) = cursor.current() {
@@ -115,15 +113,14 @@ fn handle_nested_types(
 fn parse_namespace(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_namespace);
     let mut name = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -136,7 +133,7 @@ fn parse_namespace(
 
     if entry.has_children() {
         builder.path_component(name, |builder| {
-            while cursor.next_entry()?.is_some() {
+            while cursor.next_entry()? {
                 if cursor.current().is_some() {
                     handle_nested_types(dwarf, unit, cursor, builder)?;
                 } else {
@@ -153,7 +150,7 @@ fn parse_namespace(
 fn parse_base_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -165,8 +162,7 @@ fn parse_base_type(
     let mut encoding = None;
     let mut alignment = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -218,7 +214,7 @@ fn parse_base_type(
 fn parse_structure_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -231,8 +227,7 @@ fn parse_structure_type(
     let mut decl = false;
     let mut decl_coord = DeclCoord::default();
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -296,7 +291,7 @@ fn parse_structure_type(
 
     if entry.has_children() {
         builder.path_component(name.clone(), |builder| {
-            while let Some(()) = cursor.next_entry()? {
+            while cursor.next_entry()? {
                 if let Some(child) = cursor.current() {
                     match child.tag() {
                         gim_con::DW_TAG_template_type_parameter => {
@@ -377,7 +372,7 @@ fn parse_structure_type(
 fn parse_template_type_parameter(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<TemplateTypeParameter, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_template_type_parameter);
@@ -385,8 +380,7 @@ fn parse_template_type_parameter(
     let mut type_id = None;
     let mut name = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -397,7 +391,7 @@ fn parse_template_type_parameter(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -415,7 +409,7 @@ fn parse_template_type_parameter(
 fn parse_member(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<Member, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_member);
@@ -427,8 +421,7 @@ fn parse_member(
     let mut artificial = false;
     let mut decl_coord = DeclCoord::default();
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -445,7 +438,7 @@ fn parse_member(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -510,15 +503,14 @@ fn parse_member(
 fn parse_variant_part(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<VariantShape, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_variant_part);
 
     let mut discr = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_discr => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -534,7 +526,7 @@ fn parse_variant_part(
     let mut members = vec![];
     let mut variants = IndexMap::default();
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_member => {
@@ -588,7 +580,7 @@ fn parse_variant_part(
 fn parse_variant(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<(Option<u64>, Variant), ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_variant);
@@ -597,8 +589,7 @@ fn parse_variant(
     let mut discr_value = None;
     let mut decl_coord = DeclCoord::default();
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_discr_value => {
                 // TODO: DWARF explicitly does not require this to be unsigned!
@@ -643,7 +634,7 @@ fn parse_variant(
 
     let mut members = vec![];
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_member => {
@@ -673,7 +664,7 @@ fn parse_variant(
 fn parse_enumeration_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -686,8 +677,7 @@ fn parse_enumeration_type(
     let mut enum_class = false;
     let mut type_id = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -707,7 +697,7 @@ fn parse_enumeration_type(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -723,7 +713,7 @@ fn parse_enumeration_type(
 
     if entry.has_children() {
         builder.path_component(name.clone(), |_| {
-            while let Some(()) = cursor.next_entry()? {
+            while cursor.next_entry()? {
                 if let Some(child) = cursor.current() {
                     match child.tag() {
                         gim_con::DW_TAG_enumerator => {
@@ -759,7 +749,7 @@ fn parse_enumeration_type(
 fn parse_enumerator(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     byte_size: u64,
 ) -> Result<Enumerator, ParseError> {
     let entry = cursor.current().unwrap();
@@ -768,8 +758,7 @@ fn parse_enumerator(
     let mut name = None;
     let mut const_value = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -807,7 +796,7 @@ fn parse_enumerator(
 fn parse_array_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -816,8 +805,7 @@ fn parse_array_type(
     let offset = entry.offset().to_unit_section_offset(unit);
     let mut element_type_id = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -825,7 +813,7 @@ fn parse_array_type(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    element_type_id = Some(o.into());
+                    element_type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -838,7 +826,7 @@ fn parse_array_type(
 
     let mut subrange = None;
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_subrange_type => {
@@ -869,7 +857,7 @@ fn parse_array_type(
 fn parse_subrange_type(
     _dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<
     (TypeId, u64, Option<u64>),
     ParseError,
@@ -881,8 +869,7 @@ fn parse_subrange_type(
     let mut lower_bound = None;
     let mut count = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -890,7 +877,7 @@ fn parse_subrange_type(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -909,7 +896,7 @@ fn parse_subrange_type(
     let lower_bound = lower_bound.unwrap_or(0);
 
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if cursor.current().is_some() {
                 skip_entry(cursor)?;
             } else {
@@ -923,7 +910,7 @@ fn parse_subrange_type(
 fn parse_pointer_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -933,8 +920,7 @@ fn parse_pointer_type(
     let mut name = None;
     let mut type_id = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -945,7 +931,7 @@ fn parse_pointer_type(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -966,7 +952,7 @@ fn parse_pointer_type(
     let type_id = TypeId(type_id.unwrap());
 
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if cursor.current().is_some() {
                 skip_entry(cursor)?;
             } else {
@@ -986,7 +972,7 @@ fn parse_pointer_type(
 fn parse_union_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -997,8 +983,7 @@ fn parse_union_type(
     let mut byte_size = None;
     let mut alignment = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -1026,7 +1011,7 @@ fn parse_union_type(
     };
     if entry.has_children() {
         builder.path_component(name.clone(), |_| {
-            while let Some(()) = cursor.next_entry()? {
+            while cursor.next_entry()? {
                 if let Some(child) = cursor.current() {
                     match child.tag() {
                         gim_con::DW_TAG_template_type_parameter => {
@@ -1067,7 +1052,7 @@ fn parse_union_type(
 fn parse_subroutine_type(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -1076,8 +1061,7 @@ fn parse_subroutine_type(
     let offset = entry.offset().to_unit_section_offset(unit);
     let mut return_type_id = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -1085,7 +1069,7 @@ fn parse_subroutine_type(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    return_type_id = Some(TypeId(o.into()));
+                    return_type_id = Some(TypeId(UnitSectionOffset(o.0)));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -1097,7 +1081,7 @@ fn parse_subroutine_type(
     let mut formal_parameters = vec![];
 
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_formal_parameter => {
@@ -1125,15 +1109,14 @@ fn parse_subroutine_type(
 fn parse_formal_parameter(
     _dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<TypeId, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_formal_parameter);
 
     let mut type_id = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_type => {
                 if let gimli::AttributeValue::UnitRef(o) = attr.value() {
@@ -1141,7 +1124,7 @@ fn parse_formal_parameter(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -1216,7 +1199,7 @@ fn get_path(
 }
 
 fn skip_entry(
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
 
@@ -1239,7 +1222,7 @@ fn skip_entry(
     */
 
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if cursor.current().is_some() {
                 skip_entry(cursor)?;
             } else {
@@ -1254,7 +1237,7 @@ fn skip_entry(
 fn parse_subprogram(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -1268,8 +1251,7 @@ fn parse_subprogram(
     let mut abstract_origin = None;
     let mut noreturn = false;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -1329,7 +1311,7 @@ fn parse_subprogram(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    return_type_id = Some(TypeId(o.into()));
+                    return_type_id = Some(TypeId(UnitSectionOffset(o.0)));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -1340,7 +1322,7 @@ fn parse_subprogram(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    abstract_origin = Some(o.into());
+                    abstract_origin = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected abstract_origin type: {:?}", attr.value());
                 }
@@ -1368,7 +1350,7 @@ fn parse_subprogram(
     let mut template_type_parameters = vec![];
     let mut inlines = vec![];
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_formal_parameter => {
@@ -1421,7 +1403,7 @@ fn parse_subprogram(
 fn parse_sub_parameter(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<SubParameter, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_formal_parameter);
@@ -1432,8 +1414,7 @@ fn parse_sub_parameter(
     let mut abstract_origin = None;
     let mut const_value = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -1444,7 +1425,7 @@ fn parse_sub_parameter(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(TypeId(o.into()));
+                    type_id = Some(TypeId(UnitSectionOffset(o.0)));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }
@@ -1455,7 +1436,7 @@ fn parse_sub_parameter(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    abstract_origin = Some(o.into());
+                    abstract_origin = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected abstract_origin type: {:?}", attr.value());
                 }
@@ -1515,7 +1496,7 @@ fn parse_sub_parameter(
 fn parse_inlined_subroutine(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
 ) -> Result<InlinedSubroutine, ParseError> {
     let entry = cursor.current().unwrap();
     assert!(entry.tag() == gim_con::DW_TAG_inlined_subroutine);
@@ -1526,8 +1507,7 @@ fn parse_inlined_subroutine(
     let mut lo_pc = None;
     let mut hi_pc = None;
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_ranges => {
                 if let gimli::AttributeValue::RangeListsRef(roff) = attr.value() {
@@ -1586,7 +1566,7 @@ fn parse_inlined_subroutine(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    abstract_origin = Some(o.into());
+                    abstract_origin = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected abstract_origin type: {:?}", attr.value());
                 }
@@ -1609,7 +1589,7 @@ fn parse_inlined_subroutine(
     let mut inlines = vec![];
     let mut formal_parameters = vec![];
     if entry.has_children() {
-        while let Some(()) = cursor.next_entry()? {
+        while cursor.next_entry()? {
             if let Some(child) = cursor.current() {
                 match child.tag() {
                     gim_con::DW_TAG_inlined_subroutine => {
@@ -1645,7 +1625,7 @@ fn parse_inlined_subroutine(
 fn parse_static_variable(
     dwarf: &gimli::Dwarf<RtArcReader>,
     unit: &gimli::Unit<RtArcReader>,
-    cursor: &mut gimli::EntriesCursor<'_, '_, RtArcReader>,
+    cursor: &mut gimli::EntriesCursor<'_, RtArcReader>,
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
@@ -1659,8 +1639,7 @@ fn parse_static_variable(
 
     let offset = entry.offset().to_unit_section_offset(unit);
 
-    let mut attrs = entry.attrs();
-    while let Some(attr) = attrs.next()? {
+    for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_name => {
                 name = Some(get_attr_string(dwarf, &attr)?);
@@ -1707,7 +1686,7 @@ fn parse_static_variable(
                 } else if let gimli::AttributeValue::DebugInfoRef(o) =
                     attr.value()
                 {
-                    type_id = Some(o.into());
+                    type_id = Some(UnitSectionOffset(o.0));
                 } else {
                     panic!("unexpected type type: {:?}", attr.value());
                 }

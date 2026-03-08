@@ -873,7 +873,7 @@ pub fn parse_file(
             }
         }
         let mut entries = unit.entries();
-        while let Some(()) = entries.next_entry()? {
+        while entries.next_entry()? {
             if entries.current().is_none() {
                 break;
             }

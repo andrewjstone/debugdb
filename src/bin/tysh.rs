@@ -93,14 +93,7 @@ struct Goff(gimli::UnitSectionOffset);
 
 impl std::fmt::Display for Goff {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.0 {
-            gimli::UnitSectionOffset::DebugInfoOffset(gimli::DebugInfoOffset(x)) => {
-                write!(f, "<.debug_info+0x{:08x}>", x)
-            }
-            gimli::UnitSectionOffset::DebugTypesOffset(gimli::DebugTypesOffset(x)) => {
-                write!(f, "<.debug_types+0x{:08x}>", x)
-            }
-        }
+        write!(f, "<.debug_info+0x{:08x}>", self.0.0)
     }
 }
 
@@ -118,14 +111,7 @@ impl std::fmt::Display for NamedGoff<'_> {
         };
 
         write!(f, "{}", bold.paint(n))?;
-        match self.1.0 {
-            gimli::UnitSectionOffset::DebugInfoOffset(gimli::DebugInfoOffset(x)) => {
-                write!(f, " {}<.debug_info+0x{:08x}>{}", dim.prefix(), x, dim.suffix())
-            }
-            gimli::UnitSectionOffset::DebugTypesOffset(gimli::DebugTypesOffset(x)) => {
-                write!(f, " {}<.debug_types+0x{:08x}>{}", dim.prefix(), x, dim.suffix())
-            }
-        }
+        write!(f, " {}<.debug_info+0x{:08x}>{}", dim.prefix(), self.1.0.0, dim.suffix())
     }
 }
 
@@ -205,7 +191,7 @@ fn parse_type_name(s: &str) -> Option<ParsedTypeName<'_>> {
         return if rest.starts_with("info+0x") {
             let num = &rest[7..rest.len() - 1];
             if let Ok(n) = usize::from_str_radix(num, 16) {
-                Some(ParsedTypeName::Goff(TypeId(gimli::DebugInfoOffset(n).into())))
+                Some(ParsedTypeName::Goff(TypeId(gimli::UnitSectionOffset(n))))
             } else {
                 println!("can't parse {} as hex", num);
                 None
@@ -213,7 +199,7 @@ fn parse_type_name(s: &str) -> Option<ParsedTypeName<'_>> {
         } else if rest.starts_with("types+0x") {
             let num = &rest[8..rest.len() - 1];
             if let Ok(n) = usize::from_str_radix(num, 16) {
-                Some(ParsedTypeName::Goff(TypeId(gimli::DebugTypesOffset(n).into())))
+                Some(ParsedTypeName::Goff(TypeId(gimli::UnitSectionOffset(n))))
             } else {
                 println!("can't parse {} as hex", num);
                 None
