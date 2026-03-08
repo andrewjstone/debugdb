@@ -17,7 +17,7 @@ use indexmap::IndexMap;
 use std::{convert::Infallible, num::NonZeroU64};
 use thiserror::Error;
 
-use gimli::{constants as gim_con, UnitSectionOffset};
+use gimli::{constants as gim_con, AttributeValue, Reader, UnitSectionOffset};
 
 #[derive(Clone, Debug, Error)]
 pub enum ParseError {
@@ -44,10 +44,6 @@ pub fn parse_entry(
     builder: &mut DebugDbBuilder,
 ) -> Result<(), ParseError> {
     let entry = cursor.current().unwrap();
-
-    let _attrs = entry.attrs();
-    // discard attrs
-
     if entry.has_children() {
         while cursor.next_entry()? {
             if cursor.current().is_some() {
@@ -322,6 +318,10 @@ fn parse_structure_type(
                             members.push(m);
                         }
                         gim_con::DW_TAG_variant_part => {
+                            // TODO: We should pass the struct name down so
+                            // we can debug when parse_variant() fails on the
+                            // discriminant value via dwarfdump.
+                            //println!("struct name = {name}");
                             variant_parts
                                 .push(parse_variant_part(dwarf, unit, cursor)?);
                         }
@@ -613,11 +613,37 @@ fn parse_variant(
     for attr in entry.attrs() {
         match attr.name() {
             gim_con::DW_AT_discr_value => {
-                // TODO: DWARF explicitly does not require this to be unsigned!
-                // It so happens that Rust tends to generated it unsigned, but
-                // as explicit discriminator values become available in more and
-                // more places, this could easily become wrong.
-                discr_value = Some(attr.value().udata_value().unwrap());
+                match attr.form() {
+                    gim_con::DW_FORM_block1 => {
+                        // TODO: From looking at the dwarf for sled-agent
+                        // this seems to only occur for i128/u128 types inside
+                        // Results. The discriminant value ends up being 16
+                        // bytes tagged as a block. However, only the first byte
+                        // seems to matter for a little endian discriminant.
+                        //
+                        // Since the buffer is little endian, we read it as a
+                        // u128 and then try to convert it into a u64. If this
+                        // fails, then we have encountered an unexpected case
+                        // and are back to the drawing board.
+                        let AttributeValue::Block(r) = attr.value() else {
+                            panic!("Expected block attribute for discr_value");
+                        };
+                        assert_eq!(r.len(), 16);
+                        discr_value = Some(
+                            u64::try_from(u128::from_le_bytes(
+                                r.bytes().try_into().unwrap(),
+                            ))
+                            .expect("discriminant value should fit in a u64"),
+                        );
+                    }
+                    _ => {
+                        // TODO: DWARF explicitly does not require this to be unsigned!
+                        // It so happens that Rust tends to generated it unsigned, but
+                        // as explicit discriminator values become available in more and
+                        // more places, this could easily become wrong.
+                        discr_value = Some(attr.value().udata_value().unwrap());
+                    }
+                }
             }
             gim_con::DW_AT_decl_file => {
                 if let gimli::AttributeValue::FileIndex(f) = attr.value() {
