@@ -5,6 +5,7 @@
 use crate::DebugDb;
 use indexmap::IndexMap;
 use std::borrow::Cow;
+use std::fmt;
 use std::hash::Hash;
 use std::num::NonZeroU64;
 
@@ -983,5 +984,311 @@ impl Equiv for Type {
             (Self::Subroutine(a), Self::Subroutine(b)) => a.equiv(b),
             _ => None,
         }
+    }
+}
+
+/// A type ID paired with a `DebugDb` reference, for display purposes.
+///
+/// Displays the type name (bold) followed by the debug info offset (dimmed).
+pub struct NamedTypeId<'a>(pub &'a DebugDb, pub TypeId);
+
+impl fmt::Display for NamedTypeId<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let bold = ansi_term::Style::new().bold();
+        let dim = ansi_term::Style::new().dimmed();
+
+        let n = if let Some(name) = self.0.type_name(self.1) {
+            name
+        } else {
+            "<anonymous type>".into()
+        };
+
+        write!(f, "{}", bold.paint(n))?;
+        write!(
+            f,
+            " {}<.debug_info+0x{:08x}>{}",
+            dim.prefix(),
+            self.1 .0 .0,
+            dim.suffix()
+        )
+    }
+}
+
+/// A `Type` paired with a `DebugDb` reference, implementing `Display` to show
+/// detailed type information.
+pub struct TypeWithDb<'a>(pub &'a Type, pub &'a DebugDb);
+
+impl fmt::Display for TypeWithDb<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let db = self.1;
+        match self.0 {
+            Type::Base(s) => {
+                writeln!(f, "base type")?;
+                writeln!(f, "- encoding: {:?}", s.encoding)?;
+                write!(f, "- byte size: {}", s.byte_size)?;
+            }
+            Type::Pointer(s) => {
+                writeln!(f, "pointer type")?;
+                write!(f, "- points to: {}", NamedTypeId(db, s.type_id))?;
+            }
+            Type::Array(s) => {
+                writeln!(f, "array type")?;
+                writeln!(
+                    f,
+                    "- element type: {}",
+                    NamedTypeId(db, s.element_type_id)
+                )?;
+                writeln!(f, "- lower bound: {}", s.lower_bound)?;
+                if let Some(n) = s.count {
+                    write!(f, "- count: {}", n)?;
+                } else {
+                    write!(f, "- size not given")?;
+                }
+            }
+            Type::Struct(s) => {
+                if s.tuple_like {
+                    writeln!(f, "struct type (tuple-like)")?;
+                } else {
+                    writeln!(f, "struct type")?;
+                }
+                if s.decl_coord.is_useful() {
+                    write!(
+                        f,
+                        "- declared at: {}",
+                        s.decl_coord.file.as_deref().unwrap_or("???")
+                    )?;
+                    if let Some(n) = s.decl_coord.line {
+                        write!(f, ":{n}")?;
+                    } else {
+                        write!(f, ":???")?;
+                    }
+                    if let Some(n) = s.decl_coord.column {
+                        write!(f, ":{n}")?;
+                    }
+                    writeln!(f)?;
+                }
+                if let Some(z) = s.byte_size {
+                    writeln!(f, "- byte size: {z}")?;
+                }
+                if let Some(a) = s.alignment {
+                    writeln!(f, "- alignment: {}", a)?;
+                } else {
+                    writeln!(f, "- not aligned")?;
+                }
+                if !s.template_type_parameters.is_empty() {
+                    writeln!(f, "- template type parameters:")?;
+                    for ttp in &s.template_type_parameters {
+                        writeln!(
+                            f,
+                            "  - {} = {}",
+                            ttp.name,
+                            NamedTypeId(db, ttp.type_id)
+                        )?;
+                    }
+                }
+                if !s.members.is_empty() {
+                    writeln!(f, "- members:")?;
+                    for (i, mem) in s.members.iter().enumerate() {
+                        if let Some(name) = &mem.name {
+                            writeln!(
+                                f,
+                                "  {i}. {name}: {}",
+                                NamedTypeId(db, mem.type_id)
+                            )?;
+                        } else {
+                            writeln!(
+                                f,
+                                "  - <unnamed>: {}",
+                                NamedTypeId(db, mem.type_id)
+                            )?;
+                        }
+                        writeln!(f, "    - offset: {} bytes", mem.location)?;
+                        if let Some(s) =
+                            db.type_by_id(mem.type_id).unwrap().byte_size(db)
+                        {
+                            writeln!(f, "    - size: {} bytes", s)?;
+                        }
+                        if let Some(a) = mem.alignment {
+                            writeln!(f, "    - aligned: {} bytes", a)?;
+                        }
+                        if mem.artificial {
+                            writeln!(f, "    - artificial")?;
+                        }
+                    }
+                } else {
+                    writeln!(f, "- no members")?;
+                }
+            }
+            Type::Enum(s) => {
+                writeln!(f, "enum type")?;
+                if let Some(z) = s.byte_size {
+                    writeln!(f, "- byte size: {z}")?;
+                }
+                if let Some(a) = s.alignment {
+                    writeln!(f, "- alignment: {}", a)?;
+                } else {
+                    writeln!(f, "- not aligned")?;
+                }
+                if !s.template_type_parameters.is_empty() {
+                    writeln!(f, "- type parameters:")?;
+                    for ttp in &s.template_type_parameters {
+                        writeln!(
+                            f,
+                            "  - {} = {}",
+                            ttp.name,
+                            NamedTypeId(db, ttp.type_id)
+                        )?;
+                    }
+                }
+
+                match &s.shape {
+                    VariantShape::Zero => {
+                        write!(f, "- empty (uninhabited) enum")?;
+                    }
+                    VariantShape::One(v) => {
+                        writeln!(f, "- single variant enum w/o discriminator")?;
+                        writeln!(
+                            f,
+                            "  - content type: {}",
+                            NamedTypeId(db, v.member.type_id)
+                        )?;
+                        writeln!(f, "  - offset: {} bytes", v.member.location)?;
+                        if let Some(a) = v.member.alignment {
+                            writeln!(f, "  - aligned: {} bytes", a)?;
+                        }
+                        if !v.member.artificial {
+                            write!(f, "  - not artificial, oddly")?;
+                        }
+                    }
+                    VariantShape::Many {
+                        member, variants, ..
+                    } => {
+                        if let Some(dname) = db.type_name(member.type_id) {
+                            writeln!(f, "- {} variants discriminated by {} at offset {}", variants.len(), dname, member.location)?;
+                        } else {
+                            writeln!(f, "- {} variants discriminated by an anonymous type at offset {}", variants.len(), member.location)?;
+                        }
+                        if !member.artificial {
+                            writeln!(f, "  - not artificial, oddly")?;
+                        }
+
+                        // Print explicit values first
+                        for (val, var) in variants {
+                            if let Some(val) = val {
+                                writeln!(f, "- when discriminator == {}", val)?;
+                                writeln!(
+                                    f,
+                                    "  - contains type: {}",
+                                    NamedTypeId(db, var.member.type_id)
+                                )?;
+                                writeln!(
+                                    f,
+                                    "  - at offset: {} bytes",
+                                    var.member.location
+                                )?;
+                                if let Some(a) = var.member.alignment {
+                                    writeln!(f, "  - aligned: {} bytes", a)?;
+                                }
+                            }
+                        }
+                        // Now, default.
+                        for (val, var) in variants {
+                            if val.is_none() {
+                                writeln!(f, "- any other discriminator value")?;
+                                writeln!(
+                                    f,
+                                    "  - contains type: {}",
+                                    NamedTypeId(db, var.member.type_id)
+                                )?;
+                                writeln!(
+                                    f,
+                                    "  - at offset: {} bytes",
+                                    var.member.location
+                                )?;
+                                if let Some(a) = var.member.alignment {
+                                    writeln!(f, "  - aligned: {} bytes", a)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Type::CEnum(s) => {
+                writeln!(f, "C-like enum type")?;
+                writeln!(
+                    f,
+                    "- representation: {}",
+                    NamedTypeId(db, s.repr_type_id)
+                )?;
+                writeln!(f, "- byte size: {}", s.byte_size)?;
+                if let Some(a) = s.alignment {
+                    writeln!(f, "- alignment: {a}")?;
+                }
+                writeln!(f, "- {} values defined", s.enumerators.len())?;
+                for e in s.enumerators.values() {
+                    writeln!(f, "  - {} = 0x{:x}", e.name, e.const_value)?;
+                }
+            }
+            Type::Union(s) => {
+                writeln!(f, "union type")?;
+                writeln!(f, "- byte size: {}", s.byte_size)?;
+                writeln!(f, "- alignment: {}", s.alignment)?;
+                if !s.template_type_parameters.is_empty() {
+                    writeln!(f, "- template type parameters:")?;
+                    for ttp in &s.template_type_parameters {
+                        writeln!(
+                            f,
+                            "  - {} = {}",
+                            ttp.name,
+                            NamedTypeId(db, ttp.type_id)
+                        )?;
+                    }
+                }
+                if !s.members.is_empty() {
+                    writeln!(f, "- members:")?;
+                    for mem in &s.members {
+                        if let Some(name) = &mem.name {
+                            writeln!(
+                                f,
+                                "  - {}: {}",
+                                name,
+                                NamedTypeId(db, mem.type_id)
+                            )?;
+                        } else {
+                            writeln!(
+                                f,
+                                "  - <unnamed>: {}",
+                                NamedTypeId(db, mem.type_id)
+                            )?;
+                        }
+                        writeln!(f, "    - offset: {} bytes", mem.location)?;
+                        if let Some(a) = mem.alignment {
+                            writeln!(f, "    - aligned: {} bytes", a)?;
+                        }
+                        if mem.artificial {
+                            writeln!(f, "    - artificial")?;
+                        }
+                    }
+                } else {
+                    writeln!(f, "- no members")?;
+                }
+            }
+            Type::Subroutine(s) => {
+                writeln!(f, "subroutine type")?;
+                if let Some(rt) = s.return_type_id {
+                    writeln!(f, "- return type: {}", NamedTypeId(db, rt))?;
+                }
+                if !s.formal_parameters.is_empty() {
+                    writeln!(f, "- formal parameters:")?;
+                    for &fp in &s.formal_parameters {
+                        writeln!(f, "  - {}", NamedTypeId(db, fp))?;
+                    }
+                }
+            }
+            Type::Unresolved(_) => {
+                write!(f, "type not found in debug info!")?;
+            }
+        }
+        Ok(())
     }
 }

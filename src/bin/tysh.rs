@@ -8,8 +8,8 @@ use rangemap::{RangeInclusiveMap, RangeMap};
 
 use debugdb::load::{ImgMachine, Load};
 use debugdb::{
-    value::Value, DebugDb, Encoding, Enum, Member, Struct, Type, TypeId,
-    VariantShape,
+    value::Value, DebugDb, Encoding, Enum, Member, NamedTypeId, Struct, Type,
+    TypeId, TypeWithDb, VariantShape,
 };
 use regex::Regex;
 
@@ -103,30 +103,6 @@ impl std::fmt::Display for Goff {
     }
 }
 
-struct NamedGoff<'a>(&'a debugdb::DebugDb, TypeId);
-
-impl std::fmt::Display for NamedGoff<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let bold = ansi_term::Style::new().bold();
-        let dim = ansi_term::Style::new().dimmed();
-
-        let n = if let Some(name) = self.0.type_name(self.1) {
-            name
-        } else {
-            "<anonymous type>".into()
-        };
-
-        write!(f, "{}", bold.paint(n))?;
-        write!(
-            f,
-            " {}<.debug_info+0x{:08x}>{}",
-            dim.prefix(),
-            self.1 .0 .0,
-            dim.suffix()
-        )
-    }
-}
-
 struct Ctx {
     segments: RangeInclusiveMap<u64, Vec<u8>>,
 }
@@ -173,49 +149,8 @@ static COMMANDS: &[(&str, Command, &str)] = &[
 ];
 
 fn cmd_list(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
-    // We're gonna make a copy to sort it, because alphabetical order seems
-    // polite.
-    let mut types_copy = db
-        .canonical_types()
-        .filter(|(goff, _ty)| {
-            if !args.is_empty() {
-                if let Some(name) = db.type_name(*goff) {
-                    return name.contains(args);
-                } else {
-                    return false;
-                }
-            }
-            true
-        })
-        .collect::<Vec<_>>();
-
-    types_copy.sort_by_key(|(goff, _ty)| db.type_name(*goff));
-
-    for (goff, ty) in types_copy {
-        let kind = match ty {
-            Type::Base(_) => "base",
-            Type::Struct(_) => "struct",
-            Type::Enum(_) => "enum",
-            Type::CEnum(_) => "c-enum",
-            Type::Array(_) => "array",
-            Type::Pointer(_) => "ptr",
-            Type::Union(_) => "union",
-            Type::Subroutine(_) => "subr",
-            Type::Unresolved(_) => "missing",
-        };
-
-        let aliases = db.aliases_of_type(goff);
-        if let Some(aliases) = aliases {
-            println!(
-                "{:6} {} ({} aliases)",
-                kind,
-                NamedGoff(db, goff),
-                aliases.len()
-            );
-        } else {
-            println!("{:6} {}", kind, NamedGoff(db, goff));
-        }
-    }
+    let type_ids = db.find_types_by_name_substring(args);
+    print!("{}", db.format_types(&type_ids));
 }
 
 fn parse_type_name(s: &str) -> Option<ParsedTypeName<'_>> {
@@ -295,266 +230,18 @@ fn simple_query_cmd(
         if many {
             println!()
         }
-        print!("{}: ", NamedGoff(db, goff));
+        print!("{}: ", NamedTypeId(db, goff));
         q(db, t);
     }
 }
 
 fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     simple_query_cmd(db, args, |db, t| {
+        print!("{}", TypeWithDb(t, db));
         match t {
-            Type::Base(s) => {
-                println!("base type");
-                println!("- encoding: {:?}", s.encoding);
-                println!("- byte size: {}", s.byte_size);
-            }
-            Type::Pointer(s) => {
-                println!("pointer type");
-                println!("- points to: {}", NamedGoff(db, s.type_id));
-            }
-            Type::Array(s) => {
-                println!("array type");
-                println!(
-                    "- element type: {}",
-                    NamedGoff(db, s.element_type_id)
-                );
-                println!("- lower bound: {}", s.lower_bound);
-                if let Some(n) = s.count {
-                    println!("- count: {}", n);
-                } else {
-                    println!("- size not given");
-                }
-            }
-            Type::Struct(s) => {
-                if s.tuple_like {
-                    println!("struct type (tuple-like)");
-                } else {
-                    println!("struct type");
-                }
-                if s.decl_coord.is_useful() {
-                    print!(
-                        "- declared at: {}",
-                        s.decl_coord.file.as_deref().unwrap_or("???")
-                    );
-                    if let Some(n) = s.decl_coord.line {
-                        print!(":{n}");
-                    } else {
-                        print!(":???");
-                    }
-                    // Be more tolerant of missing column number.
-                    if let Some(n) = s.decl_coord.column {
-                        print!(":{n}");
-                    }
-                    println!();
-                }
-                if let Some(z) = s.byte_size {
-                    println!("- byte size: {z}");
-                }
-                if let Some(a) = s.alignment {
-                    println!("- alignment: {}", a);
-                } else {
-                    println!("- not aligned");
-                }
-                if !s.template_type_parameters.is_empty() {
-                    println!("- template type parameters:");
-                    for ttp in &s.template_type_parameters {
-                        println!(
-                            "  - {} = {}",
-                            ttp.name,
-                            NamedGoff(db, ttp.type_id)
-                        );
-                    }
-                }
-                if !s.members.is_empty() {
-                    println!("- members:");
-                    for (i, mem) in s.members.iter().enumerate() {
-                        if let Some(name) = &mem.name {
-                            println!(
-                                "  {i}. {name}: {}",
-                                NamedGoff(db, mem.type_id)
-                            );
-                        } else {
-                            println!(
-                                "  - <unnamed>: {}",
-                                NamedGoff(db, mem.type_id)
-                            );
-                        }
-                        println!("    - offset: {} bytes", mem.location);
-                        if let Some(s) =
-                            db.type_by_id(mem.type_id).unwrap().byte_size(db)
-                        {
-                            println!("    - size: {} bytes", s);
-                        }
-                        if let Some(a) = mem.alignment {
-                            println!("    - aligned: {} bytes", a);
-                        }
-                        if mem.artificial {
-                            println!("    - artificial");
-                        }
-                    }
-                } else {
-                    println!("- no members");
-                }
-
-                struct_picture(db, s, db.pointer_size());
-            }
-            Type::Enum(s) => {
-                println!("enum type");
-                if let Some(z) = s.byte_size {
-                    println!("- byte size: {z}");
-                }
-                if let Some(a) = s.alignment {
-                    println!("- alignment: {}", a);
-                } else {
-                    println!("- not aligned");
-                }
-                if !s.template_type_parameters.is_empty() {
-                    println!("- type parameters:");
-                    for ttp in &s.template_type_parameters {
-                        println!(
-                            "  - {} = {}",
-                            ttp.name,
-                            NamedGoff(db, ttp.type_id)
-                        );
-                    }
-                }
-
-                match &s.shape {
-                    debugdb::VariantShape::Zero => {
-                        println!("- empty (uninhabited) enum");
-                    }
-                    debugdb::VariantShape::One(v) => {
-                        println!("- single variant enum w/o discriminator");
-                        println!(
-                            "  - content type: {}",
-                            NamedGoff(db, v.member.type_id)
-                        );
-                        println!("  - offset: {} bytes", v.member.location);
-                        if let Some(a) = v.member.alignment {
-                            println!("  - aligned: {} bytes", a);
-                        }
-                        if !v.member.artificial {
-                            println!("  - not artificial, oddly");
-                        }
-                    }
-                    debugdb::VariantShape::Many {
-                        member, variants, ..
-                    } => {
-                        if let Some(dname) = db.type_name(member.type_id) {
-                            println!("- {} variants discriminated by {} at offset {}", variants.len(), dname, member.location);
-                        } else {
-                            println!("- {} variants discriminated by an anonymous type at offset {}", variants.len(), member.location);
-                        }
-                        if !member.artificial {
-                            println!("  - not artificial, oddly");
-                        }
-
-                        // Print explicit values first
-                        for (val, var) in variants {
-                            if let Some(val) = val {
-                                println!("- when discriminator == {}", val);
-                                println!(
-                                    "  - contains type: {}",
-                                    NamedGoff(db, var.member.type_id)
-                                );
-                                println!(
-                                    "  - at offset: {} bytes",
-                                    var.member.location
-                                );
-                                if let Some(a) = var.member.alignment {
-                                    println!("  - aligned: {} bytes", a);
-                                }
-                            }
-                        }
-                        // Now, default.
-                        for (val, var) in variants {
-                            if val.is_none() {
-                                println!("- any other discriminator value");
-                                println!(
-                                    "  - contains type: {}",
-                                    NamedGoff(db, var.member.type_id)
-                                );
-                                println!(
-                                    "  - at offset: {} bytes",
-                                    var.member.location
-                                );
-                                if let Some(a) = var.member.alignment {
-                                    println!("  - aligned: {} bytes", a);
-                                }
-                            }
-                        }
-                    }
-                }
-                enum_picture(db, s, db.pointer_size());
-            }
-            Type::CEnum(s) => {
-                println!("C-like enum type");
-                println!("- representation: {}", NamedGoff(db, s.repr_type_id));
-                println!("- byte size: {}", s.byte_size);
-                if let Some(a) = s.alignment {
-                    println!("- alignment: {a}");
-                }
-                println!("- {} values defined", s.enumerators.len());
-                for e in s.enumerators.values() {
-                    println!("  - {} = 0x{:x}", e.name, e.const_value);
-                }
-            }
-            Type::Union(s) => {
-                println!("union type");
-                println!("- byte size: {}", s.byte_size);
-                println!("- alignment: {}", s.alignment);
-                if !s.template_type_parameters.is_empty() {
-                    println!("- template type parameters:");
-                    for ttp in &s.template_type_parameters {
-                        println!(
-                            "  - {} = {}",
-                            ttp.name,
-                            NamedGoff(db, ttp.type_id)
-                        );
-                    }
-                }
-                if !s.members.is_empty() {
-                    println!("- members:");
-                    for mem in &s.members {
-                        if let Some(name) = &mem.name {
-                            println!(
-                                "  - {}: {}",
-                                name,
-                                NamedGoff(db, mem.type_id)
-                            );
-                        } else {
-                            println!(
-                                "  - <unnamed>: {}",
-                                NamedGoff(db, mem.type_id)
-                            );
-                        }
-                        println!("    - offset: {} bytes", mem.location);
-                        if let Some(a) = mem.alignment {
-                            println!("    - aligned: {} bytes", a);
-                        }
-                        if mem.artificial {
-                            println!("    - artificial");
-                        }
-                    }
-                } else {
-                    println!("- no members");
-                }
-            }
-            Type::Subroutine(s) => {
-                println!("subroutine type");
-                if let Some(rt) = s.return_type_id {
-                    println!("- return type: {}", NamedGoff(db, rt));
-                }
-                if !s.formal_parameters.is_empty() {
-                    println!("- formal parameters:");
-                    for &fp in &s.formal_parameters {
-                        println!("  - {}", NamedGoff(db, fp));
-                    }
-                }
-            }
-            Type::Unresolved(_) => {
-                println!("type not found in debug info!");
-            }
+            Type::Struct(s) => struct_picture(db, s, db.pointer_size()),
+            Type::Enum(s) => enum_picture(db, s, db.pointer_size()),
+            _ => {}
         }
     })
 }
@@ -910,7 +597,7 @@ fn cmd_vars(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
             "0x{:0width$x} {}: {}",
             v.location,
             v.name,
-            NamedGoff(db, v.type_id),
+            NamedTypeId(db, v.type_id),
             width = db.pointer_size() * 2
         );
     }
@@ -927,7 +614,7 @@ fn cmd_var(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
 
     for (_id, v) in results {
         println!("{} @ {}", v.name, Goff(v.offset));
-        println!("- type: {}", NamedGoff(db, v.type_id));
+        println!("- type: {}", NamedTypeId(db, v.type_id));
         println!("- address: 0x{:x}", v.location);
         let Some(ty) = db.type_by_id(v.type_id) else {
             continue;
@@ -981,7 +668,7 @@ fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
                 let v = db.static_variable_by_id(vid).unwrap();
                 println!("static {}", bold.paint(&v.name));
                 println!("- range 0x{:x}..0x{:x}", e.range.start, e.range.end);
-                println!("- type {}", NamedGoff(db, v.type_id));
+                println!("- type {}", NamedTypeId(db, v.type_id));
 
                 // Try to determine path within type.
                 offset_to_path(db, v.type_id, offset);
@@ -1191,9 +878,9 @@ fn struct_picture_inner<'a, N: Eq + Clone + Display>(
                     "_"
                 };
                 if label == name {
-                    format!("{name}: {}", NamedGoff(db, m.type_id))
+                    format!("{name}: {}", NamedTypeId(db, m.type_id))
                 } else {
-                    format!("{label} = {name}: {}", NamedGoff(db, m.type_id))
+                    format!("{label} = {name}: {}", NamedTypeId(db, m.type_id))
                 }
             });
         }
@@ -1262,7 +949,7 @@ fn enum_picture(db: &DebugDb, s: &Enum, width: usize) {
                     print!("else => body: ");
                     false
                 };
-                println!("{}", NamedGoff(db, var.member.type_id));
+                println!("{}", NamedTypeId(db, var.member.type_id));
                 let vt = db.type_by_id(var.member.type_id).unwrap();
                 match vt {
                     Type::Struct(s) => {
@@ -1405,7 +1092,7 @@ fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
         if many {
             println!()
         }
-        println!("{}: ", NamedGoff(db, goff));
+        println!("{}: ", NamedTypeId(db, goff));
         match Value::from_state(&ctx.segments, addr, db, t) {
             Ok(v) => {
                 println!("{}", ValueWithDb(v, db));
@@ -1459,7 +1146,7 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
         if many {
             println!()
         }
-        println!("{}: ", NamedGoff(db, goff));
+        println!("{}: ", NamedTypeId(db, goff));
         let mut v = &match Value::from_state(&ctx.segments, addr, db, t) {
             Ok(v) => v,
             Err(e) => {
@@ -1613,7 +1300,7 @@ fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
         if many {
             println!()
         }
-        println!("{}: ", NamedGoff(db, goff));
+        println!("{}: ", NamedTypeId(db, goff));
         let Some(size) = t.byte_size(db) else {
             println!("  (type is unsized, cannot decode)");
             continue;
@@ -1720,7 +1407,7 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
         if many {
             println!()
         }
-        println!("{}: ", NamedGoff(db, goff));
+        println!("{}: ", NamedTypeId(db, goff));
         let Some(size) = t.byte_size(db) else {
             println!("  (type is unsized, cannot decode)");
             continue;

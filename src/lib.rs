@@ -161,6 +161,68 @@ impl DebugDb {
         Some(self.type_by_id(id)?.name(self))
     }
 
+    /// Searches canonical types whose name contains `needle`, returning their
+    /// `TypeId`s sorted by name. If `needle` is empty, all canonical types are
+    /// returned.
+    pub fn find_types_by_name_substring(&self, needle: &str) -> Vec<TypeId> {
+        let mut results: Vec<_> = self
+            .canonical_types()
+            .filter(|(goff, _ty)| {
+                if !needle.is_empty() {
+                    if let Some(name) = self.type_name(*goff) {
+                        return name.contains(needle);
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|(goff, _ty)| goff)
+            .collect();
+
+        results
+            .sort_by_key(|goff| self.type_name(*goff).map(|c| c.into_owned()));
+        results
+    }
+
+    /// Formats a slice of `TypeId`s as lines showing the kind, name, and alias
+    /// count of each type, suitable for display to a user.
+    pub fn format_types(&self, type_ids: &[TypeId]) -> String {
+        use std::fmt::Write;
+
+        let mut out = String::new();
+        for &goff in type_ids {
+            let ty = self.type_by_id(goff).unwrap();
+            let kind = match ty {
+                Type::Base(_) => "base",
+                Type::Struct(_) => "struct",
+                Type::Enum(_) => "enum",
+                Type::CEnum(_) => "c-enum",
+                Type::Array(_) => "array",
+                Type::Pointer(_) => "ptr",
+                Type::Union(_) => "union",
+                Type::Subroutine(_) => "subr",
+                Type::Unresolved(_) => "missing",
+            };
+
+            let aliases = self.aliases_of_type(goff);
+            if let Some(aliases) = aliases {
+                writeln!(
+                    out,
+                    "{:6} {} ({} aliases)",
+                    kind,
+                    NamedTypeId(self, goff),
+                    aliases.len()
+                )
+                .unwrap();
+            } else {
+                writeln!(out, "{:6} {}", kind, NamedTypeId(self, goff))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
     /// Consults the type-name index and returns an iterator over types with a
     /// given name.
     ///
