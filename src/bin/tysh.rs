@@ -3,14 +3,15 @@ use std::{fmt::Display, io::BufRead};
 use anyhow::Result;
 use clap::Parser;
 use debugdb::value::ValueWithDb;
-use object::{Object, ObjectSegment};
-use rangemap::{RangeInclusiveMap, RangeMap};
+use rangemap::RangeMap;
 
 use debugdb::load::{ImgMachine, Load};
+use debugdb::segments::ElfSegments;
 use debugdb::{
     value::Value, DebugDb, Encoding, Enum, Member, NamedTypeId, Struct, Type,
     TypeId, TypeWithDb, VariantShape,
 };
+use reedline::{DefaultPrompt, DefaultPromptSegment, Prompt};
 use regex::Regex;
 
 #[derive(Debug, Parser)]
@@ -21,18 +22,10 @@ struct TySh {
 fn main() -> Result<()> {
     let args = TySh::parse();
 
-    let buffer = std::fs::read(args.filename)?;
+    let buffer = std::fs::read(&args.filename)?;
     let object = object::File::parse(&*buffer)?;
-    let mut segments = RangeInclusiveMap::new();
-    for seg in object.segments() {
-        if seg.size() == 0 {
-            continue;
-        }
-        segments.insert(
-            seg.address()..=seg.address() + (seg.size() - 1),
-            seg.data()?.to_vec(),
-        );
-    }
+    let mut ctx = ElfSegments::new();
+    ctx.extend_from_object(&object)?;
     let everything = debugdb::parse_file(&object)?;
 
     println!(
@@ -41,20 +34,22 @@ fn main() -> Result<()> {
     );
     println!("To quit: ^D or exit");
 
-    let mut rl = rustyline::Editor::<(), _>::new()?;
-    let prompt = ansi_term::Colour::Green.paint(">> ").to_string();
-    let mut ctx = Ctx { segments };
+    let mut rl = reedline::Reedline::create();
+    let prompt = DefaultPrompt::new(
+        DefaultPromptSegment::Basic(
+            ansi_term::Colour::Green.paint("tysh").to_string(),
+        ),
+        DefaultPromptSegment::Empty,
+    );
     'lineloop: loop {
-        match rl.readline(&prompt) {
-            Ok(line) => {
+        match rl.read_line(&prompt) {
+            Ok(reedline::Signal::Success(line)) => {
                 let line = line.trim();
                 let (cmd, rest) =
                     line.split_once(char::is_whitespace).unwrap_or((line, ""));
                 if line.is_empty() {
                     continue 'lineloop;
                 }
-
-                rl.add_history_entry(line)?;
 
                 match cmd {
                     "exit" => break,
@@ -81,12 +76,11 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            Err(rustyline::error::ReadlineError::Interrupted) => {
+            Ok(reedline::Signal::CtrlC) => {
                 println!("^C");
                 continue;
             }
-            Err(e) => {
-                println!("{:?}", e);
+            Ok(reedline::Signal::CtrlD) | Err(_) => {
                 break;
             }
         }
@@ -103,11 +97,7 @@ impl std::fmt::Display for Goff {
     }
 }
 
-struct Ctx {
-    segments: RangeInclusiveMap<u64, Vec<u8>>,
-}
-
-type Command = fn(&debugdb::DebugDb, &mut Ctx, &str);
+type Command = fn(&debugdb::DebugDb, &mut ElfSegments, &str);
 
 static COMMANDS: &[(&str, Command, &str)] = &[
     (
@@ -117,6 +107,11 @@ static COMMANDS: &[(&str, Command, &str)] = &[
     ),
     ("info", cmd_info, "print a summary of a type"),
     ("load", cmd_load, "loads additional segment data"),
+    (
+        "load-elf",
+        cmd_load_elf,
+        "loads segments from an ELF file at their mapped addresses",
+    ),
     ("def", cmd_def, "print a type as a pseudo-Rust definition"),
     ("sizeof", cmd_sizeof, "print size of type in bytes"),
     ("alignof", cmd_alignof, "print alignment of type in bytes"),
@@ -148,7 +143,7 @@ static COMMANDS: &[(&str, Command, &str)] = &[
     ),
 ];
 
-fn cmd_list(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_list(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     let type_ids = db.find_types_by_name_substring(args);
     print!("{}", db.format_types(&type_ids));
 }
@@ -235,7 +230,7 @@ fn simple_query_cmd(
     }
 }
 
-fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     simple_query_cmd(db, args, |db, t| {
         print!("{}", TypeWithDb(t, db));
         match t {
@@ -246,7 +241,7 @@ fn cmd_info(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     })
 }
 
-fn cmd_sizeof(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_sizeof(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     simple_query_cmd(db, args, |db, t| {
         if let Some(sz) = t.byte_size(db) {
             println!("{} bytes", sz);
@@ -256,7 +251,7 @@ fn cmd_sizeof(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     })
 }
 
-fn cmd_alignof(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_alignof(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     simple_query_cmd(db, args, |db, t| {
         if let Some(sz) = t.alignment(db) {
             println!("align to {} bytes", sz);
@@ -266,7 +261,7 @@ fn cmd_alignof(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     })
 }
 
-fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     simple_query_cmd(db, args, |db, t| {
         println!();
         match t {
@@ -498,7 +493,7 @@ fn cmd_def(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     })
 }
 
-fn cmd_addr2line(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_addr2line(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     let addr = if let Some(rest) = args.strip_prefix("0x") {
         if let Ok(a) = u64::from_str_radix(rest, 16) {
             a
@@ -531,7 +526,7 @@ fn cmd_addr2line(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_addr2stack(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_addr2stack(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     let addr = if let Some(rest) = args.strip_prefix("0x") {
         if let Ok(a) = u64::from_str_radix(rest, 16) {
             a
@@ -587,7 +582,7 @@ fn cmd_addr2stack(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_vars(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_vars(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     for (_id, v) in db.static_variables() {
         if !args.is_empty() && !v.name.contains(args) {
             continue;
@@ -603,7 +598,7 @@ fn cmd_vars(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_var(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
+fn cmd_var(db: &debugdb::DebugDb, ctx: &mut ElfSegments, args: &str) {
     let results = db.static_variables_by_name(args).collect::<Vec<_>>();
 
     match results.len() {
@@ -631,7 +626,7 @@ fn cmd_var(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_addr(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     let addr = if let Some(rest) = args.strip_prefix("0x") {
         if let Ok(a) = u64::from_str_radix(rest, 16) {
             a
@@ -768,7 +763,7 @@ fn offset_to_path(db: &debugdb::DebugDb, tid: TypeId, offset: u64) {
     }
 }
 
-fn cmd_unwind(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_unwind(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     let addr = if let Some(rest) = args.strip_prefix("0x") {
         if let Ok(a) = u64::from_str_radix(rest, 16) {
             a
@@ -1050,7 +1045,7 @@ fn byte_picture(
     println!();
 }
 
-fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
+fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut ElfSegments, args: &str) {
     let (addrstr, typestr) = if let Some(space) = args.find(' ') {
         args.split_at(space)
     } else {
@@ -1104,7 +1099,7 @@ fn cmd_decode(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
+fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut ElfSegments, args: &str) {
     let (addrstr, typestr) = if let Some(space) = args.find(' ') {
         args.split_at(space)
     } else {
@@ -1219,7 +1214,7 @@ fn cmd_decode_async(db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut ElfSegments, args: &str) {
     let type_name = args.trim();
     let types: Vec<_> = match parse_type_name(type_name) {
         None => return,
@@ -1326,7 +1321,11 @@ fn cmd_decode_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
+fn cmd_decode_async_blob(
+    db: &debugdb::DebugDb,
+    _ctx: &mut ElfSegments,
+    args: &str,
+) {
     let type_name = args.trim();
     let types: Vec<_> = match parse_type_name(type_name) {
         None => return,
@@ -1485,7 +1484,7 @@ fn cmd_decode_async_blob(db: &debugdb::DebugDb, _ctx: &mut Ctx, args: &str) {
     }
 }
 
-fn cmd_load(_db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
+fn cmd_load(_db: &debugdb::DebugDb, ctx: &mut ElfSegments, args: &str) {
     let args = args.trim();
     let words = args.split_whitespace().collect::<Vec<_>>();
     if words.len() != 2 {
@@ -1509,7 +1508,18 @@ fn cmd_load(_db: &debugdb::DebugDb, ctx: &mut Ctx, args: &str) {
         }
     };
 
-    let end = address + u64::try_from(image.len()).unwrap();
+    ctx.insert(address, image);
+}
 
-    ctx.segments.insert(address..=end, image);
+fn cmd_load_elf(_db: &debugdb::DebugDb, ctx: &mut ElfSegments, args: &str) {
+    let filename = args.trim();
+    if filename.is_empty() {
+        println!("usage: load-elf [filename]");
+        return;
+    }
+
+    match ctx.extend_from_elf(std::path::Path::new(filename)) {
+        Ok(()) => println!("loaded segments from {filename}"),
+        Err(e) => println!("unable to load ELF: {e}"),
+    }
 }

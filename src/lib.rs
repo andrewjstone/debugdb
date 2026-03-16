@@ -3,6 +3,7 @@
 
 pub mod load;
 pub mod model;
+pub mod segments;
 pub mod unify;
 pub mod value;
 
@@ -12,6 +13,7 @@ use crate::dwarf_parser::ParseError;
 use crate::unify::Unify;
 
 pub use self::model::*;
+pub use segments::ElfSegments;
 
 use object::{Object, ObjectSection, ObjectSymbol};
 use std::borrow::Cow;
