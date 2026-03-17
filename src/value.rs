@@ -6,7 +6,8 @@
 use regex::Regex;
 
 use crate::load::{
-    choose_variant, load_signed, load_unsigned, Load, LoadError, Machine,
+    choose_variant, load_float, load_signed, load_unsigned, Load, LoadError,
+    Machine,
 };
 use crate::{DebugDb, Encoding, EntityId, Type, TypeId};
 use std::borrow::Cow;
@@ -100,6 +101,8 @@ impl Value {
                 Base::I16(_) => "i16".into(),
                 Base::I32(_) => "i32".into(),
                 Base::I64(_) => "i64".into(),
+                Base::F32(_) => "f32".into(),
+                Base::F64(_) => "f64".into(),
                 Base::Bool(_) => "bool".into(),
                 Base::Unit => "()".into(),
             },
@@ -157,6 +160,8 @@ impl Value {
                 Base::I16(x) => write!(f, "{x}_i16"),
                 Base::I32(x) => write!(f, "{x}_i32"),
                 Base::I64(x) => write!(f, "{x}_i64"),
+                Base::F32(x) => write!(f, "{x}_f32"),
+                Base::F64(x) => write!(f, "{x}_f64"),
                 Base::Bool(0) => write!(f, "false"),
                 Base::Bool(1) => write!(f, "true"),
                 Base::Bool(x) => write!(f, "{x}_bool"),
@@ -406,6 +411,8 @@ pub enum Base {
     I16(i16),
     I32(i32),
     I64(i64),
+    F32(f32),
+    F64(f64),
     Bool(u8),
 }
 
@@ -426,6 +433,14 @@ impl Base {
             Self::I16(x) => Some(i64::from(x)),
             Self::I32(x) => Some(i64::from(x)),
             Self::I64(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    pub fn as_f64(self) -> Option<f64> {
+        match self {
+            Self::F32(x) => Some(f64::from(x)),
+            Self::F64(x) => Some(x),
             _ => None,
         }
     }
@@ -473,6 +488,14 @@ impl Load for Base {
             )),
             (Encoding::Signed, 8) => Ok(Base::I64(
                 load_signed(world.endian(), machine, addr, 8)?
+                    .ok_or(LoadError::DataUnavailable)?,
+            )),
+            (Encoding::Float, 4) => Ok(Base::F32(
+                load_float(world.endian(), machine, addr, 4)?
+                    .ok_or(LoadError::DataUnavailable)? as f32,
+            )),
+            (Encoding::Float, 8) => Ok(Base::F64(
+                load_float(world.endian(), machine, addr, 8)?
                     .ok_or(LoadError::DataUnavailable)?,
             )),
             (Encoding::Boolean, 1) => Ok(Base::Bool(

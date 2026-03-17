@@ -285,6 +285,40 @@ base_impl!(i16, 2, Signed, read_i16);
 base_impl!(i32, 4, Signed, read_i32);
 base_impl!(i64, 8, Signed, read_i64);
 
+impl Load for f32 {
+    fn from_state<M: Machine>(
+        machine: &M,
+        addr: u64,
+        world: &DebugDb,
+        ty: &Type,
+    ) -> Result<Self, LoadError<M::Error>> {
+        generic_base_load::<_, f32, 4>(
+            Encoding::Float,
+            ty,
+            machine,
+            addr,
+            |a| f32::from_bits(world.endian().read_u32(&a)),
+        )
+    }
+}
+
+impl Load for f64 {
+    fn from_state<M: Machine>(
+        machine: &M,
+        addr: u64,
+        world: &DebugDb,
+        ty: &Type,
+    ) -> Result<Self, LoadError<M::Error>> {
+        generic_base_load::<_, f64, 8>(
+            Encoding::Float,
+            ty,
+            machine,
+            addr,
+            |a| f64::from_bits(world.endian().read_u64(&a)),
+        )
+    }
+}
+
 impl Load for core::sync::atomic::AtomicU32 {
     fn from_state<M: Machine>(
         machine: &M,
@@ -478,6 +512,26 @@ pub(crate) fn load_unsigned<M: Machine>(
             2 => u64::from(endian.read_u16(buffer)),
             4 => u64::from(endian.read_u32(buffer)),
             8 => endian.read_u64(buffer),
+            _ => unimplemented!(),
+        })
+    })
+}
+
+pub(crate) fn load_float<M: Machine>(
+    endian: gimli::RunTimeEndian,
+    machine: &M,
+    addr: u64,
+    size: usize,
+) -> Result<Option<f64>, M::Error> {
+    let mut buffer = [0; 8];
+    let buffer = &mut buffer[..size];
+    let n = machine.read_memory(addr, buffer)?;
+    Ok(if n < size {
+        None
+    } else {
+        Some(match size {
+            4 => f64::from(f32::from_bits(endian.read_u32(buffer))),
+            8 => f64::from_bits(endian.read_u64(buffer)),
             _ => unimplemented!(),
         })
     })
