@@ -45,6 +45,20 @@ impl Value {
         Some(p.value)
     }
 
+    pub fn struct_value(&self) -> Option<&Struct> {
+        let Self::Struct(s) = self else {
+            return None;
+        };
+        Some(s)
+    }
+
+    pub fn enum_value(&self) -> Option<&Enum> {
+        let Self::Enum(e) = self else {
+            return None;
+        };
+        Some(e)
+    }
+
     pub fn newtype(&self, name: &str) -> Option<&Value> {
         let Self::Struct(s) = self else { return None };
         if s.name != name {
