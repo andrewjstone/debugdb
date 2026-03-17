@@ -45,6 +45,13 @@ impl Value {
         Some(p.value)
     }
 
+    pub fn enum_value(&self) -> Option<&Struct> {
+        let Self::Enum(e) = self else {
+            return None;
+        };
+        Some(&e.value)
+    }
+
     pub fn as_pointer(&self) -> Option<&Pointer> {
         let Self::Pointer(p) = self else {
             return None;
@@ -503,6 +510,13 @@ impl Struct {
         true
     }
 
+    pub fn newtype_value(&self) -> Option<&Value> {
+        if self.members.len() != 1 {
+            return None;
+        };
+        self.unique_member_named("__0")
+    }
+
     pub fn members_named<'s, 'n>(
         &'s self,
         name: &'n str,
@@ -641,6 +655,15 @@ impl Pointer {
         self.name.starts_with("&mut")
             || self.name.starts_with("*mut")
             || self.name.starts_with("*_")
+    }
+
+    pub fn deref<M: Machine>(
+        &self,
+        machine: &M,
+        world: &DebugDb,
+    ) -> Result<Value, LoadError<M::Error>> {
+        let ty = world.type_by_id(self.dest_type_id).expect("valid pointer");
+        Value::from_state(machine, self.value, world, ty)
     }
 }
 
