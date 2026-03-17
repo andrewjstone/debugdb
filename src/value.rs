@@ -45,14 +45,21 @@ impl Value {
         Some(p.value)
     }
 
-    pub fn struct_value(&self) -> Option<&Struct> {
+    pub fn as_pointer(&self) -> Option<&Pointer> {
+        let Self::Pointer(p) = self else {
+            return None;
+        };
+        Some(p)
+    }
+
+    pub fn as_struct(&self) -> Option<&Struct> {
         let Self::Struct(s) = self else {
             return None;
         };
         Some(s)
     }
 
-    pub fn enum_value(&self) -> Option<&Enum> {
+    pub fn as_enum(&self) -> Option<&Enum> {
         let Self::Enum(e) = self else {
             return None;
         };
