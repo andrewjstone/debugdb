@@ -39,6 +39,18 @@ impl Value {
         None
     }
 
+    pub fn u32_value(&self) -> Option<u32> {
+        if let Self::Base(b) = self {
+            match b {
+                Base::U8(x) => return Some(u32::from(*x)),
+                Base::U16(x) => return Some(u32::from(*x)),
+                Base::U32(x) => return Some(*x),
+                _ => (),
+            }
+        }
+        None
+    }
+
     pub fn pointer_value(&self) -> Option<u64> {
         let Self::Pointer(p) = self else {
             return None;
