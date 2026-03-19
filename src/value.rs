@@ -51,6 +51,27 @@ impl Value {
         None
     }
 
+    pub fn f64_value(&self) -> Option<f64> {
+        let Self::Base(Base::F64(f)) = self else {
+            return None;
+        };
+        Some(*f)
+    }
+
+    pub fn f32_value(&self) -> Option<f32> {
+        let Self::Base(Base::F32(f)) = self else {
+            return None;
+        };
+        Some(*f)
+    }
+
+    pub fn bool_value(&self) -> Option<bool> {
+        let Self::Base(Base::Bool(v)) = self else {
+            return None;
+        };
+        Some(*v != 0)
+    }
+
     pub fn pointer_value(&self) -> Option<u64> {
         let Self::Pointer(p) = self else {
             return None;

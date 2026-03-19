@@ -11,7 +11,7 @@ use debugdb::{
     value::Value, DebugDb, Encoding, Enum, Member, NamedTypeId, Struct, Type,
     TypeId, TypeWithDb, VariantShape,
 };
-use reedline::{DefaultPrompt, DefaultPromptSegment, Prompt};
+use reedline::{DefaultPrompt, DefaultPromptSegment};
 use regex::Regex;
 
 #[derive(Debug, Parser)]
