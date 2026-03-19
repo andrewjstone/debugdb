@@ -51,6 +51,31 @@ impl Value {
         None
     }
 
+    pub fn i64_value(&self) -> Option<i64> {
+        if let Self::Base(b) = self {
+            match b {
+                Base::I8(x) => return Some(i64::from(*x)),
+                Base::I16(x) => return Some(i64::from(*x)),
+                Base::I32(x) => return Some(i64::from(*x)),
+                Base::I64(x) => return Some(*x),
+                _ => (),
+            }
+        }
+        None
+    }
+
+    pub fn i32_value(&self) -> Option<i32> {
+        if let Self::Base(b) = self {
+            match b {
+                Base::I8(x) => return Some(i32::from(*x)),
+                Base::I16(x) => return Some(i32::from(*x)),
+                Base::I32(x) => return Some(*x),
+                _ => (),
+            }
+        }
+        None
+    }
+
     pub fn f64_value(&self) -> Option<f64> {
         let Self::Base(Base::F64(f)) = self else {
             return None;
